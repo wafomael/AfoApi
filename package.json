@@ -1,10 +1,22 @@
 {
   "name": "Afro_api",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "API pour application Afro",
+  "main": "BackEnd/index.js",
   "scripts": {
+    "start": "node BackEnd/index.js",
+    "dev": "nodemon BackEnd/index.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "private": true
+  "type": "module",
+  "private": true,
+  "dependencies": {
+    "bcrypt": "^6.0.0",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "joi": "^18.2.3",
+    "jsonwebtoken": "^9.0.3",
+    "pg": "^8.21.0"
+  }
 }
