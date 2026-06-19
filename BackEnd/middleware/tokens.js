@@ -143,7 +143,6 @@ export const refreshTokens = async (req, res) => {
         const savedToken = await saveRefreshToken(
             tokenData.user_id, 
             newRefreshToken, 
-            30,  // 30 jours
             { deviceInfo: req.headers['user-agent'] }
         );
 

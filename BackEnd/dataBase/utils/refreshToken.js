@@ -5,6 +5,11 @@ const TABLE_NAME = process.env.DB_SCHEMA
     ? `${process.env.DB_SCHEMA}.refresh_tokens` 
     : 'refresh_tokens';
 
+const REFRESH_TOKEN_EXPIRES_IN_DAYS = parseInt(
+    process.env.REFRESH_TOKEN_EXPIRES_IN_DAYS,
+    10
+) || 30;
+
 /**
  * Générer un refresh token aléatoire sécurisé
  * @returns {string} Refresh token (64 caractères hex)
@@ -17,11 +22,11 @@ export const generateRefreshToken = () => {
  * Sauvegarder un refresh token en base
  * @param {number} userId - ID de l'utilisateur
  * @param {string} token - Le token à sauvegarder
- * @param {number} expiresInDays - Durée de validité en jours (défaut: 30)
  * @param {object} metadata - Métadonnées optionnelles (deviceInfo, ipAddress)
+ * @param {number} expiresInDays - Durée de validité en jours (défaut: env REFRESH_TOKEN_EXPIRES_IN_DAYS ou 30)
  * @returns {Promise<object>} Token sauvegardé
  */
-export const saveRefreshToken = async (userId, token, expiresInDays = 30, metadata = {}) => {
+export const saveRefreshToken = async (userId, token, metadata = {}, expiresInDays = REFRESH_TOKEN_EXPIRES_IN_DAYS) => {
     const expiresAt = new Date();
     expiresAt.setDate(expiresAt.getDate() + expiresInDays);
 

@@ -105,11 +105,17 @@ DB_SCHEMA=s_afro_dev
 PORT=3000
 JWT_SECRET=maCleSecreteSuperSecrete
 JWT_ACCESS_EXPIRES_IN=15m
+REFRESH_TOKEN_EXPIRES_IN_DAYS=30
 SALT_ROUNDS=10
 ```
 
 IMPORTANT : `DB_HOST=192.168.2.65` (IP de la VM BD), PAS localhost,
 car la BD est sur une autre VM.
+
+> **Durée du refresh token** : contrôlée par la variable `REFRESH_TOKEN_EXPIRES_IN_DAYS`
+> (défaut 30 jours). Modifie-la dans le secret `ENV_FILE` si besoin. Avant,
+> cette valeur était écrite en dur dans le code à 30 jours ; elle est
+> maintenant centralisée dans la configuration.
 
 ---
 

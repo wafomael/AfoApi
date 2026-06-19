@@ -60,7 +60,6 @@ router.post('/inscription', validate(inscriptionSchema), async (req, res) => {
         await refreshTokenDB.saveRefreshToken(
             newUser.id, 
             refreshToken, 
-            30,  // 30 jours
             { deviceInfo: req.headers['user-agent'] }
         );
 
@@ -99,7 +98,6 @@ router.post('/connexion', validate(connexionSchema), async (req, res) => {
         await refreshTokenDB.saveRefreshToken(
             user.id,
             refreshToken,
-            30,
             { deviceInfo: req.headers['user-agent'] }
         );
 
