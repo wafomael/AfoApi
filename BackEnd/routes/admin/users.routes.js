@@ -30,7 +30,7 @@ router.use(requireAuthAdmin);
  */
 router.get('/', validate(listUsersQuerySchema, 'query'), async (req, res) => {
     try {
-        const { role, search, page, limit } = req.query;
+        const { role, search, is_pro, ville, is_online, statut, page, limit } = req.query;
 
         const pagination = {
             limit: limit,
@@ -40,8 +40,12 @@ router.get('/', validate(listUsersQuerySchema, 'query'), async (req, res) => {
         const filters = {};
         if (role) filters.role = role;
         if (search) filters.search = search;
+        if (is_pro !== undefined) filters.is_pro = is_pro;
+        if (ville) filters.ville = ville;
+        if (is_online !== undefined) filters.is_online = is_online;
+        if (statut) filters.statut = statut;
 
-        const { users, total } = await userDB.listAllUsers(filters, pagination);
+        const { users, total } = await userDB.listUsers(filters, pagination);
 
         sendSuccess(res, `${total} utilisateur(s) trouvé(s)`, {
             users,

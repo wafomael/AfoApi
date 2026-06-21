@@ -41,142 +41,92 @@ export const getUserByEmail = async (email) => {
  * @returns {Promise<object|null>}
  */
 export const getUserByUsername = async (nomUtilisateur) => {
-    const sql = `SELECT id, nom_utilisateur, email, prenom, nom, role, statut FROM ${TABLE_NAME} 
+    const sql = `SELECT id, nom_utilisateur, email, prenom, nom, role, is_pro, statut,
+                        is_online, ville, latitude, longitude, telephone, date_naissance
+                 FROM ${TABLE_NAME} 
                  WHERE nom_utilisateur = $1 AND statut = 'actif'`;
     const result = await query(sql, [nomUtilisateur]);
     return result.rows[0] || null;
 };
 
 /**
- * Lister tous les utilisateurs (Admin uniquement)
- * @param {object} filters - Filtres optionnels { role, statut, search }
+ * Résoudre une liste de noms d'utilisateur en (id, nom_utilisateur).
+ * Utilisé par la présence : le client fournit ses contacts (usernames),
+ * on récupère leurs id pour consulter leur état en ligne.
+ * @param {string[]} usernames
+ * @returns {Promise<Array<{id: number, nom_utilisateur: string}>>}
+ */
+export const getUsersByUsernames = async (usernames) => {
+    if (!Array.isArray(usernames) || usernames.length === 0) return [];
+    const sql = `SELECT id, nom_utilisateur FROM ${TABLE_NAME} 
+                 WHERE nom_utilisateur = ANY($1) AND statut = 'actif'`;
+    const result = await query(sql, [usernames]);
+    return result.rows;
+};
+
+/**
+ * Lister les utilisateurs avec des filtres utiles.
+ * Une seule fonction générique : on filtre selon le besoin (clients,
+ * coiffeurs, en ligne, par ville, recherche texte...).
+ *
+ * @param {object} filters - { role, statut, is_pro, ville, is_online, search }
  * @param {object} pagination - { limit, offset }
  * @returns {Promise<{users: array, total: number}>}
  */
-export const listAllUsers = async (filters = {}, pagination = { limit: 20, offset: 0 }) => {
-    const conditions = ["statut = 'actif'"];
+export const listUsers = async (filters = {}, pagination = { limit: 20, offset: 0 }) => {
+    const conditions = [];
     const params = [];
-    let paramIndex = 1;
+    let i = 1;
+
+    // Statut : 'actif' par défaut, mais surchargeable
+    conditions.push(`statut = $${i++}`);
+    params.push(filters.statut || 'actif');
 
     if (filters.role) {
-        conditions.push(`role = $${paramIndex++}`);
+        conditions.push(`role = $${i++}`);
         params.push(filters.role);
     }
 
-    if (filters.statut) {
-        conditions.push(`statut = $${paramIndex++}`);
-        params.push(filters.statut);
+    if (filters.is_pro !== undefined) {
+        conditions.push(`is_pro = $${i++}`);
+        params.push(filters.is_pro);
+    }
+
+    if (filters.ville) {
+        conditions.push(`ville ILIKE $${i++}`);
+        params.push(filters.ville);
+    }
+
+    if (filters.is_online !== undefined) {
+        conditions.push(`is_online = $${i++}`);
+        params.push(filters.is_online);
     }
 
     if (filters.search) {
-        conditions.push(`(prenom ILIKE $${paramIndex} OR nom ILIKE $${paramIndex} OR email ILIKE $${paramIndex})`);
+        conditions.push(`(prenom ILIKE $${i} OR nom ILIKE $${i} OR nom_utilisateur ILIKE $${i} OR email ILIKE $${i})`);
         params.push(`%${filters.search}%`);
-        paramIndex++;
+        i++;
     }
 
     const whereClause = conditions.join(' AND ');
-    
+
     // Requête count
     const countSql = `SELECT COUNT(*) FROM ${TABLE_NAME} WHERE ${whereClause}`;
     const countResult = await query(countSql, params);
     const total = parseInt(countResult.rows[0].count);
 
     // Requête données
-    const selectFields = 'id, nom_utilisateur, email, prenom, nom, date_naissance, sexe, ville, latitude, longitude, telephone, role, is_pro, statut, is_online, created_at';
+    const selectFields = 'id, nom_utilisateur, email, prenom, nom, date_naissance, sexe, ville, latitude, longitude, telephone, role, is_pro, statut, is_online, last_activity, created_at';
     const sql = `SELECT ${selectFields} FROM ${TABLE_NAME} 
                  WHERE ${whereClause} 
-                 ORDER BY created_at DESC 
-                 LIMIT $${paramIndex++} OFFSET $${paramIndex++}`;
-    
-    params.push(pagination.limit, pagination.offset);
-    
-    const result = await query(sql, params);
-    
-    return { users: result.rows, total };
-};
-
-/**
- * Lister uniquement les coiffeurs (pour les clients)
- * @param {object} pagination - { limit, offset }
- * @returns {Promise<{coiffeurs: array, total: number}>}
- */
-export const listCoiffeurs = async (pagination = { limit: 20, offset: 0 }) => {
-    const selectFields = 'id, nom_utilisateur, prenom, nom, ville, latitude, longitude, telephone, is_pro, is_online, created_at';
-    
-    const countSql = `SELECT COUNT(*) FROM ${TABLE_NAME} WHERE role = 'coiffeur' AND statut = 'actif'`;
-    const countResult = await query(countSql);
-    const total = parseInt(countResult.rows[0].count);
-
-    const sql = `SELECT ${selectFields} FROM ${TABLE_NAME} 
-                 WHERE role = 'coiffeur' AND statut = 'actif' 
                  ORDER BY is_pro DESC, created_at DESC 
-                 LIMIT $1 OFFSET $2`;
-    
-    const result = await query(sql, [pagination.limit, pagination.offset]);
-    
-    return { coiffeurs: result.rows, total };
-};
+                 LIMIT $${i++} OFFSET $${i++}`;
 
-/**
- * Rechercher les coiffeurs par proximité géographique
- * @param {number} userLat - Latitude de l'utilisateur
- * @param {number} userLng - Longitude de l'utilisateur
- * @param {number} radiusKm - Rayon de recherche en km (défaut: 10)
- * @param {object} pagination - { limit, offset }
- * @returns {Promise<{coiffeurs: array, total: number}>}
- */
-export const findCoiffeursNearby = async (userLat, userLng, radiusKm = 10, pagination = { limit: 20, offset: 0 }) => {
-    // Formule de Haversine pour calculer la distance
-    const selectFields = `
-        id, nom_utilisateur, prenom, nom, ville, latitude, longitude, telephone, is_pro, is_online, created_at,
-        (
-            6371 * acos(
-                cos(radians($1)) * cos(radians(latitude)) * 
-                cos(radians(longitude) - radians($2)) + 
-                sin(radians($1)) * sin(radians(latitude))
-            )
-        ) AS distance_km
-    `;
-    
-    const countSql = `
-        SELECT COUNT(*) FROM ${TABLE_NAME} 
-        WHERE role = 'coiffeur' 
-        AND statut = 'actif'
-        AND latitude IS NOT NULL 
-        AND longitude IS NOT NULL
-        AND (
-            6371 * acos(
-                cos(radians($1)) * cos(radians(latitude)) * 
-                cos(radians(longitude) - radians($2)) + 
-                sin(radians($1)) * sin(radians(latitude))
-            )
-        ) <= $3
-    `;
-    
-    const countResult = await query(countSql, [userLat, userLng, radiusKm]);
-    const total = parseInt(countResult.rows[0].count);
+    params.push(pagination.limit, pagination.offset);
 
-    const sql = `
-        SELECT ${selectFields} 
-        FROM ${TABLE_NAME} 
-        WHERE role = 'coiffeur' 
-        AND statut = 'actif'
-        AND latitude IS NOT NULL 
-        AND longitude IS NOT NULL
-        AND (
-            6371 * acos(
-                cos(radians($1)) * cos(radians(latitude)) * 
-                cos(radians(longitude) - radians($2)) + 
-                sin(radians($1)) * sin(radians(latitude))
-            )
-        ) <= $3
-        ORDER BY distance_km ASC, is_pro DESC
-        LIMIT $4 OFFSET $5
-    `;
-    
-    const result = await query(sql, [userLat, userLng, radiusKm, pagination.limit, pagination.offset]);
-    
-    return { coiffeurs: result.rows, total, radiusKm };
+    const result = await query(sql, params);
+
+    return { users: result.rows, total };
 };
 
 /**
@@ -365,6 +315,19 @@ export const updateUser = async (id, updates) => {
 export const updateOnlineStatus = async (id, isOnline) => {
     const sql = `UPDATE ${TABLE_NAME} SET is_online = $1, last_activity = NOW() WHERE id = $2`;
     await query(sql, [isOnline, id]);
+};
+
+/**
+ * Remettre TOUS les utilisateurs hors ligne.
+ * À appeler au démarrage du serveur : après un crash/restart, les sockets
+ * sont toutes tombées mais la colonne is_online pourrait rester à true.
+ * On repart donc d'un état propre (tout offline), les clients se
+ * reconnecteront et repasseront online d'eux-mêmes.
+ * @returns {Promise<void>}
+ */
+export const setAllUsersOffline = async () => {
+    const sql = `UPDATE ${TABLE_NAME} SET is_online = FALSE WHERE is_online = TRUE`;
+    await query(sql);
 };
 
 /**

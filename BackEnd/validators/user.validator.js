@@ -283,5 +283,27 @@ export const listUsersQuerySchema = Joi.object({
         .messages({
             'string.min': 'La recherche doit faire au moins 2 caractères',
             'string.max': 'La recherche ne doit pas dépasser 100 caractères'
+        }),
+
+    is_pro: Joi.boolean()
+        .messages({
+            'boolean.base': 'is_pro doit être un booléen'
+        }),
+
+    ville: Joi.string()
+        .max(100)
+        .messages({
+            'string.max': 'Le nom de la ville ne doit pas dépasser 100 caractères'
+        }),
+
+    is_online: Joi.boolean()
+        .messages({
+            'boolean.base': 'is_online doit être un booléen'
+        }),
+
+    statut: Joi.string()
+        .valid('actif', 'desabonne')
+        .messages({
+            'any.only': 'Le statut doit être: actif ou desabonne'
         })
 });

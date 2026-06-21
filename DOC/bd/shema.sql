@@ -90,3 +90,61 @@ $$ LANGUAGE plpgsql;
 CREATE TRIGGER trg_utilisateur_updated_at
     BEFORE UPDATE ON s_afro_dev.utilisateur
     FOR EACH ROW EXECUTE FUNCTION s_afro_dev.set_updated_at();
+
+
+-- ==============================
+-- TABLE ABONNEMENT
+-- ==============================
+-- suiveur_id : l'utilisateur qui suit
+-- suivi_id   : l'utilisateur qui est suivi
+-- La clé primaire composite empêche les doublons.
+-- ON DELETE CASCADE : si un user est supprimé, ses abonnements disparaissent.
+
+CREATE TABLE s_afro_dev.abonnement (
+    suiveur_id  INTEGER   NOT NULL REFERENCES s_afro_dev.utilisateur(id) ON DELETE CASCADE,
+    suivi_id    INTEGER   NOT NULL REFERENCES s_afro_dev.utilisateur(id) ON DELETE CASCADE,
+    created_at  TIMESTAMP NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (suiveur_id, suivi_id),
+    CONSTRAINT no_self_follow CHECK (suiveur_id <> suivi_id)
+);
+
+-- Index pour la lecture côté "qui est-ce que je suis ?" (connexion Socket)
+CREATE INDEX idx_abonnement_suiveur ON s_afro_dev.abonnement(suiveur_id);
+-- Index pour la lecture côté "qui me suit ?" (stats, route profil)
+CREATE INDEX idx_abonnement_suivi   ON s_afro_dev.abonnement(suivi_id);
+
+
+-- ==============================
+-- TABLE VISIBILITE_UTILISATEUR
+-- ==============================
+-- Niveaux de visibilité par champ sensible :
+--   0 = Personne
+--   1 = Tribu (abonnements mutuels)  ← défaut pour les champs privés
+--   2 = Abonnés (tous ceux qui me suivent)
+--   3 = Tout le monde (public)
+
+CREATE TABLE s_afro_dev.visibilite_utilisateur (
+    utilisateur_id  INTEGER  NOT NULL PRIMARY KEY
+                             REFERENCES s_afro_dev.utilisateur(id) ON DELETE CASCADE,
+    online_status   SMALLINT NOT NULL DEFAULT 1 CHECK (online_status   BETWEEN 0 AND 3),
+    telephone       SMALLINT NOT NULL DEFAULT 1 CHECK (telephone       BETWEEN 0 AND 3),
+    email           SMALLINT NOT NULL DEFAULT 1 CHECK (email           BETWEEN 0 AND 3),
+    localisation    SMALLINT NOT NULL DEFAULT 3 CHECK (localisation    BETWEEN 0 AND 3),
+    date_naissance  SMALLINT NOT NULL DEFAULT 0 CHECK (date_naissance  BETWEEN 0 AND 3),
+    updated_at      TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+-- Trigger : crée automatiquement la ligne de visibilité à chaque nouvelle inscription
+CREATE OR REPLACE FUNCTION s_afro_dev.create_visibilite_utilisateur()
+RETURNS TRIGGER AS $$
+BEGIN
+    INSERT INTO s_afro_dev.visibilite_utilisateur (utilisateur_id)
+    VALUES (NEW.id)
+    ON CONFLICT DO NOTHING;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_create_visibilite
+    AFTER INSERT ON s_afro_dev.utilisateur
+    FOR EACH ROW EXECUTE FUNCTION s_afro_dev.create_visibilite_utilisateur();
