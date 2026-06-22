@@ -1,15 +1,18 @@
 import { Router } from 'express';
 import { authenticate } from '../middleware/auth.js';
 import { sendSuccess, sendError, internalErrorResponse, notFoundResponse } from '../utils/apiResponse.js';
-import { getUserByUsername } from '../dataBase/utils/user.js';
+import { getUserByUsername, listUsers } from '../dataBase/utils/user.js';
 import {
     getRelation,
-    getCompteurs
+    getCompteurs,
+    follow,
+    unfollow
 } from '../dataBase/utils/abonnement.js';
 import {
     getVisibilite,
     updateVisibilite,
     peutVoir,
+    relationToCode,
     NIVEAU,
     RELATION
 } from '../dataBase/utils/visibilite.js';
@@ -21,6 +24,36 @@ const router = Router();
  * ROUTES UTILISATEURS — PROFIL & ABONNEMENTS
  * ============================================
  */
+
+/**
+ * GET /users?search=<texte>&limit=10
+ * Recherche d'utilisateurs par prénom, nom ou nom d'utilisateur.
+ * Renvoie une liste légère destinée à l'autocomplétion de recherche.
+ * NB: doit rester déclarée AVANT la route '/:username'.
+ */
+router.get('/', authenticate, async (req, res) => {
+    try {
+        const search = (req.query.search || '').trim();
+        if (search.length < 1) {
+            return sendSuccess(res, 'Aucun terme de recherche', { users: [] });
+        }
+
+        const limit = Math.min(parseInt(req.query.limit) || 10, 30);
+        const { users } = await listUsers({ search }, { limit, offset: 0 });
+
+        const resultats = users.map((u) => ({
+            nom_utilisateur: u.nom_utilisateur,
+            prenom:          u.prenom,
+            nom:             u.nom,
+            role:            u.role,
+            is_pro:          u.is_pro
+        }));
+
+        sendSuccess(res, `${resultats.length} résultat(s)`, { users: resultats });
+    } catch (error) {
+        internalErrorResponse(res, error);
+    }
+});
 
 /**
  * GET /users/:username
@@ -51,7 +84,8 @@ router.get('/:username', authenticate, async (req, res) => {
             is_pro:          target.is_pro,
             abonnements:     compteurs.abonnements,
             abonnes:         compteurs.abonnes,
-            relation         // 'aucune' | 'je_suis' | 'me_suit' | 'mutuel'
+            // Code entier : -1 soi-même | 0 aucune | 1 je le suis | 2 il me suit | 3 mutuel
+            relation:        relationToCode(relation, estSoiMeme)
         };
 
         // Champs conditionnels selon visibilité
@@ -124,6 +158,50 @@ router.put('/me/visibilite', authenticate, async (req, res) => {
 
         const updated = await updateVisibilite(req.userId, updates);
         sendSuccess(res, 'Visibilité mise à jour', updated);
+    } catch (error) {
+        internalErrorResponse(res, error);
+    }
+});
+
+/**
+ * POST /users/:username/abonnement
+ * S'abonner à un utilisateur. Auto-abonnement interdit.
+ */
+router.post('/:username/abonnement', authenticate, async (req, res) => {
+    try {
+        const target = await getUserByUsername(req.params.username);
+        if (!target) return notFoundResponse(res, 'Utilisateur');
+
+        if (target.id === req.userId) {
+            return sendError(res, 'Vous ne pouvez pas vous abonner à vous-même', 400, null, 'SELF_FOLLOW_FORBIDDEN');
+        }
+
+        await follow(req.userId, target.id);
+
+        const relation = await getRelation(req.userId, target.id);
+        sendSuccess(res, 'Abonnement ajouté', { relation: relationToCode(relation) });
+    } catch (error) {
+        internalErrorResponse(res, error);
+    }
+});
+
+/**
+ * DELETE /users/:username/abonnement
+ * Se désabonner d'un utilisateur.
+ */
+router.delete('/:username/abonnement', authenticate, async (req, res) => {
+    try {
+        const target = await getUserByUsername(req.params.username);
+        if (!target) return notFoundResponse(res, 'Utilisateur');
+
+        if (target.id === req.userId) {
+            return sendError(res, 'Action invalide', 400, null, 'SELF_UNFOLLOW_FORBIDDEN');
+        }
+
+        await unfollow(req.userId, target.id);
+
+        const relation = await getRelation(req.userId, target.id);
+        sendSuccess(res, 'Désabonnement effectué', { relation: relationToCode(relation) });
     } catch (error) {
         internalErrorResponse(res, error);
     }

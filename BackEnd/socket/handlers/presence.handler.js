@@ -1,11 +1,30 @@
 import { SOCKET_EVENTS } from '../events.js';
 import { updateOnlineStatus, getUsersByUsernames, getUserById, getUserByUsername } from '../../dataBase/utils/user.js';
-import { getAbonnements, follow, unfollow } from '../../dataBase/utils/abonnement.js';
+import { getAbonnements, getRelation } from '../../dataBase/utils/abonnement.js';
+import { getVisibilite, peutVoir, NIVEAU } from '../../dataBase/utils/visibilite.js';
 import {
     addConnection,
     removeConnection,
     isUserOnline
 } from '../presence/onlineUsers.js';
+
+/**
+ * Détermine si `observerId` a le droit de voir la présence (online) de `target`.
+ * Utilise exactement la même règle que la route REST GET /users/:username
+ * (champ `online_status` de la visibilité + relation), pour rester cohérent.
+ * @param {number} observerId
+ * @param {{ id: number }} target
+ * @returns {Promise<boolean>}
+ */
+const peutVoirPresence = async (observerId, target) => {
+    if (observerId === target.id) return true;
+    const [visibilite, relation] = await Promise.all([
+        getVisibilite(target.id),
+        getRelation(observerId, target.id)
+    ]);
+    const niveau = visibilite?.online_status ?? NIVEAU.TRIBU;
+    return peutVoir(niveau, relation);
+};
 
 /**
  * Nom de la room Socket.IO pour un username donné.
@@ -20,13 +39,13 @@ const presenceRoom = (username) => `presence:${username}`;
  * Flux à la connexion :
  *   1. La socket rejoint sa propre room (`presence:<username>`).
  *   2. On charge les abonnements depuis la DB (qui est-ce que je suis ?).
- *   3. La socket rejoint les rooms de chaque personne suivie.
+ *   3. La socket rejoint les rooms des personnes suivies — uniquement
+ *      celles dont la visibilité autorise l'observateur à voir leur présence.
  *   4. Si c'est le 1er appareil → marquer ONLINE + notifier les abonnés.
  *
- * Follow / Unfollow en live (Socket = source unique) :
- *   - `follow`   → persiste en DB + rejoint la room immédiatement.
- *   - `unfollow` → persiste en DB + quitte la room immédiatement.
- *   L'utilisateur est toujours connecté quand il agit → pas besoin de route REST.
+ * Le follow / unfollow (persistance DB) est géré côté REST. Les événements
+ * socket `follow`/`unfollow` ne servent qu'à (dé)s'abonner à la room de
+ * présence en live, sans reconnexion, et toujours sous réserve d'autorisation.
  *
  * Déconnexion :
  *   - Si plus aucun appareil → marquer OFFLINE + notifier les abonnés.
@@ -57,15 +76,19 @@ export const registerPresenceHandlers = async (io, socket) => {
     // --- 3. Rejoindre les rooms des gens qu'il suit ---
     // On attend la fin (succès ou échec) avant d'appeler addConnection,
     // pour que markPresence ne broadcast qu'une fois toutes les rooms prêtes.
-    await getAbonnements(userId)
-        .then((abonnements) => {
-            for (const { username } of abonnements) {
-                socket.join(presenceRoom(username));
-            }
-        })
-        .catch((error) => {
-            console.error('[presence] erreur chargement abonnements:', error.message);
-        });
+    try {
+        const abonnements = await getAbonnements(userId);
+        await Promise.all(
+            abonnements.map(async ({ username }) => {
+                const target = await getUserByUsername(username);
+                if (target && await peutVoirPresence(userId, target)) {
+                    socket.join(presenceRoom(username));
+                }
+            })
+        );
+    } catch (error) {
+        console.error('[presence] erreur chargement abonnements:', error.message);
+    }
 
     // --- 4. Marquer online si c'est le premier appareil ---
     // Appelé après le chargement des rooms (garanti par le await ci-dessus).
@@ -74,7 +97,9 @@ export const registerPresenceHandlers = async (io, socket) => {
         await markPresence(socket, true);
     }
 
-    // --- 5. Follow : persiste en DB + rejoint la room de présence ---
+    // --- 5. Follow live : rejoindre la room de présence si autorisé ---
+    // Le follow est déjà persisté via REST ; ici on ne fait que s'abonner
+    // à la présence en live (et on renvoie l'état courant immédiatement).
     socket.on(SOCKET_EVENTS.FOLLOW, async (payload = {}) => {
         const targetUsername = payload.username;
         if (!targetUsername || targetUsername === socket.username) return;
@@ -83,27 +108,26 @@ export const registerPresenceHandlers = async (io, socket) => {
             const target = await getUserByUsername(targetUsername);
             if (!target) return;
 
-            await follow(userId, target.id);
+            if (!(await peutVoirPresence(userId, target))) return; // non autorisé → silencieux
+
             socket.join(presenceRoom(targetUsername));
+
+            // Snapshot immédiat : l'observateur connaît tout de suite l'état courant.
+            socket.emit(SOCKET_EVENTS.PRESENCE_CHANGED, {
+                username: targetUsername,
+                online: isUserOnline(target.id),
+                timestamp: new Date().toISOString()
+            });
         } catch (error) {
-            console.error('[presence] erreur follow:', error.message);
+            console.error('[presence] erreur follow (presence):', error.message);
         }
     });
 
-    // --- 6. Unfollow : supprime en DB + quitte la room de présence ---
+    // --- 6. Unfollow live : quitter la room de présence ---
     socket.on(SOCKET_EVENTS.UNFOLLOW, async (payload = {}) => {
         const targetUsername = payload.username;
         if (!targetUsername || targetUsername === socket.username) return;
-
-        try {
-            const target = await getUserByUsername(targetUsername);
-            if (!target) return;
-
-            await unfollow(userId, target.id);
-            socket.leave(presenceRoom(targetUsername));
-        } catch (error) {
-            console.error('[presence] erreur unfollow:', error.message);
-        }
+        socket.leave(presenceRoom(targetUsername));
     });
 
     // --- 7. Photo instantanée : état actuel de la liste demandée ---
@@ -118,12 +142,20 @@ export const registerPresenceHandlers = async (io, socket) => {
 
             const rows = await getUsersByUsernames(usernames);
 
-            const users = rows
-                .filter((row) => row.id !== userId)
-                .map((row) => ({
-                    username: row.nom_utilisateur,
-                    online: isUserOnline(row.id)
-                }));
+            // On ne renvoie la présence que des users dont la visibilité
+            // autorise l'observateur à la voir (même règle que le reste).
+            const resolved = await Promise.all(
+                rows
+                    .filter((row) => row.id !== userId)
+                    .map(async (row) => {
+                        if (!(await peutVoirPresence(userId, row))) return null;
+                        return {
+                            username: row.nom_utilisateur,
+                            online: isUserOnline(row.id)
+                        };
+                    })
+            );
+            const users = resolved.filter(Boolean);
 
             socket.emit(SOCKET_EVENTS.PRESENCE_LIST, { users });
         } catch (error) {

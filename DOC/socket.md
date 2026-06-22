@@ -101,29 +101,33 @@ Alice ferme la tablette          → activeSockets = 0 → OFFLINE ← DB mis à
 
 ---
 
-## Follow / Unfollow en live
+## Follow / Unfollow en live (abonnement présence)
 
-Quand Alice suit Charlie pendant une session active, la room est mise à jour
-**immédiatement** sans reconnexion.
+**La persistance du follow se fait via REST** (`POST/DELETE /users/:username/abonnement`).
+Les événements socket `follow`/`unfollow` ne servent qu'à **(dé)s'abonner à la
+room de présence en live**, sans attendre la prochaine reconnexion — et
+**toujours sous réserve d'autorisation** (`peutVoir(online_status, relation)`,
+la même règle que le champ `is_online` de `GET /users/:username`).
 
 ```
-Alice émet : follow { username: "charlie" }
+Alice suit Charlie via REST, puis émet : follow { username: "charlie" }
     │
     ├─ getUserByUsername("charlie") → { id: 42, ... }
-    ├─ INSERT INTO abonnement (alice_id, 42) ON CONFLICT DO NOTHING
-    └─ socket.join("presence:charlie")
-         → Alice reçoit maintenant les changements de présence de Charlie.
+    ├─ peutVoirPresence(alice_id, charlie) ?
+    │     non → on ignore (aucune room rejointe)
+    │     oui ↓
+    ├─ socket.join("presence:charlie")
+    └─ socket.emit("presence:changed", { username:"charlie", online: <état courant> })
+         → Alice connaît tout de suite l'état + reçoit les changements suivants.
 
 Alice émet : unfollow { username: "charlie" }
-    │
-    ├─ unfollow(alice_id, 42)
     └─ socket.leave("presence:charlie")
          → Alice ne reçoit plus les changements de Charlie.
 ```
 
-> **Note :** Si le follow/unfollow est fait via la route REST (hors session socket),
-> la room sera synchronisée à la **prochaine connexion** Socket d'Alice
-> (étape 3 du flux connexion recharge tous les abonnements depuis la DB).
+> **Note :** Si Alice ne fait que le follow REST sans émettre l'événement socket,
+> la room sera synchronisée à sa **prochaine connexion** Socket
+> (étape 3 : rejoint les rooms autorisées de tous ses abonnements).
 
 ---
 
@@ -163,9 +167,9 @@ La fonction `peutVoir(niveau, relation)` (dans `utils/visibilite.js`) retourne
 | Événement | Direction | Payload | Description |
 |---|---|---|---|
 | `presence:changed` | Serveur → Client | `{ username, online, timestamp }` | Un user suivi a changé d'état |
-| `presence:list` | Client ↔ Serveur | `{ usernames[] }` / `{ users[] }` | Photo instantanée des statuts |
-| `follow` | Client → Serveur | `{ username }` | Suivre un user (persiste + rejoint la room) |
-| `unfollow` | Client → Serveur | `{ username }` | Ne plus suivre (persiste + quitte la room) |
+| `presence:list` | Client ↔ Serveur | `{ usernames[] }` / `{ users[] }` | Photo instantanée des statuts (filtrée par autorisation `peutVoir`) |
+| `follow` | Client → Serveur | `{ username }` | S'abonner à la présence d'un user en live (rejoint la room **si autorisé**). La persistance du follow se fait via REST. |
+| `unfollow` | Client → Serveur | `{ username }` | Se désabonner de la présence (quitte la room) |
 
 ---
 
@@ -209,8 +213,8 @@ socket.emit('unfollow', { 'username': 'charlie' });
 | Statut online (photo) | `GET /users/:username` → champ `is_online` | — |
 | Statut online (live) | — | Écouter `presence:changed` |
 | Liste de présence (photo) | — | Émettre `presence:list` |
-| Follow | `POST /users/:username/follow` | Émettre `follow` (ou via REST + synchro reconnexion) |
-| Unfollow | `DELETE /users/:username/follow` | Émettre `unfollow` |
+| Follow | `POST /users/:username/abonnement` (persistance) | Émettre `follow` pour s'abonner à la présence en live (sinon synchro à la reconnexion) |
+| Unfollow | `DELETE /users/:username/abonnement` (persistance) | Émettre `unfollow` pour se désabonner de la présence |
 
 **Source de vérité** : la colonne `is_online` en DB (mise à jour par Socket).  
 **Cache temps réel** : la `Map` en mémoire dans `onlineUsers.js` (consultée par `presence:list`).

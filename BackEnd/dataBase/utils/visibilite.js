@@ -25,6 +25,33 @@ export const RELATION = {
 };
 
 /**
+ * Code entier de relation, exposé au client (plus simple à utiliser que les chaînes).
+ *  -1 = soi-même (aucun bouton d'abonnement)
+ *   0 = aucune relation        → bouton "S'abonner"
+ *   1 = je le suis             → bouton "Se désabonner"
+ *   2 = il me suit             → bouton "S'abonner"
+ *   3 = mutuel                 → bouton "Se désabonner"
+ */
+export const RELATION_CODE = {
+    SOI_MEME: -1,
+    [RELATION.AUCUNE]:  0,
+    [RELATION.JE_SUIS]: 1,
+    [RELATION.ME_SUIT]: 2,
+    [RELATION.MUTUEL]:  3
+};
+
+/**
+ * Convertit une relation (chaîne interne) en code entier pour le client.
+ * @param {string} relation
+ * @param {boolean} estSoiMeme
+ * @returns {number}
+ */
+export const relationToCode = (relation, estSoiMeme = false) => {
+    if (estSoiMeme) return RELATION_CODE.SOI_MEME;
+    return RELATION_CODE[relation] ?? RELATION_CODE[RELATION.AUCUNE];
+};
+
+/**
  * Détermine si `observateur` peut voir un champ selon le niveau configuré
  * et la relation entre lui et le propriétaire du profil.
  *
