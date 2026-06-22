@@ -5,6 +5,7 @@ import { validate } from '../middleware/validate.js';
 import { sendSuccess, sendError, internalErrorResponse } from '../utils/apiResponse.js';
 import * as userDB from '../dataBase/utils/user.js';
 import * as refreshTokenDB from '../dataBase/utils/refreshToken.js';
+import { buildPhotoUrl, deletePhoto } from '../utils/photo.js';
 import {
     inscriptionSchema,
     connexionSchema,
@@ -159,7 +160,7 @@ router.get('/session', authenticate, async (req, res) => {
         const timeLeft = req.tokenExp ? req.tokenExp - Math.floor(Date.now() / 1000) : null;
 
         sendSuccess(res, 'Session valide', {
-            user,
+            user: { ...user, photo_url: buildPhotoUrl(req, user.id, user.nom_utilisateur) },
             tokenExpiresIn: timeLeft,  // secondes
             shouldRefresh: timeLeft && timeLeft < 300  // true si < 5 min
         });
@@ -175,7 +176,7 @@ router.get('/profil', authenticate, async (req, res) => {
     try {
         const user = await userDB.getUserById(req.userId);
         if (!user) return sendError(res, 'Profil non trouvé', 404, null, 'USER_NOT_FOUND');
-        sendSuccess(res, 'Profil récupéré', user);
+        sendSuccess(res, 'Profil récupéré', { ...user, photo_url: buildPhotoUrl(req, user.id, user.nom_utilisateur) });
     } catch (error) {
         internalErrorResponse(res, error);
     }
@@ -229,6 +230,9 @@ router.delete('/profil', authenticate, async (req, res) => {
         
         const deleted = await userDB.softDeleteUser(req.userId);
         if (!deleted) return sendError(res, 'Suppression échouée', 500, null, 'DELETE_FAILED');
+
+        // Nettoyer le fichier photo pour ne pas laisser d'orphelin
+        deletePhoto(req.userId);
 
         sendSuccess(res, 'Compte désactivé avec succès');
     } catch (error) {

@@ -8,6 +8,7 @@ import userRoutes from './routes/users.routes.js';
 import { initSocket } from './socket/index.js';
 import { setAllUsersOffline } from './dataBase/utils/user.js';
 import { httpLogger } from './middleware/logger.js';
+import { ensureUploadDirs } from './config/upload.js';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -24,6 +25,7 @@ app.use(express.json());
 app.use(httpLogger);
 
 // Routes
+// (Les photos de profil sont servies par GET /users/:username/photo)
 app.use('/auth', authRoutes);
 app.use('/admin/users', adminUserRoutes);
 app.use('/users', userRoutes);
@@ -68,6 +70,9 @@ initSocket(server);
 server.listen(PORT, async () => {
     console.log(`Serveur démarré sur http://localhost:${PORT}`);
     console.log(`Socket.IO actif sur le même port (${PORT})`);
+
+    // Créer les dossiers d'upload s'ils n'existent pas
+    ensureUploadDirs();
 
     // Repartir d'un état propre : aucun user online au démarrage
     try {

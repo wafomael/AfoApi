@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { authenticate } from '../middleware/auth.js';
 import { sendSuccess, sendError, internalErrorResponse, notFoundResponse } from '../utils/apiResponse.js';
-import { getUserByUsername, listUsers } from '../dataBase/utils/user.js';
+import { getUserByUsername, getUserById, listUsers } from '../dataBase/utils/user.js';
 import {
     getRelation,
     getCompteurs,
@@ -16,6 +16,8 @@ import {
     NIVEAU,
     RELATION
 } from '../dataBase/utils/visibilite.js';
+import { uploadPhoto } from '../middleware/upload.js';
+import { savePhoto, deletePhoto, buildPhotoUrl, getPhotoPath, photoExists } from '../utils/photo.js';
 
 const router = Router();
 
@@ -46,7 +48,8 @@ router.get('/', authenticate, async (req, res) => {
             prenom:          u.prenom,
             nom:             u.nom,
             role:            u.role,
-            is_pro:          u.is_pro
+            is_pro:          u.is_pro,
+            photo_url:       buildPhotoUrl(req, u.id, u.nom_utilisateur)
         }));
 
         sendSuccess(res, `${resultats.length} résultat(s)`, { users: resultats });
@@ -84,6 +87,8 @@ router.get('/:username', authenticate, async (req, res) => {
             is_pro:          target.is_pro,
             abonnements:     compteurs.abonnements,
             abonnes:         compteurs.abonnes,
+            // Photo de profil : publique, null si l'utilisateur n'en a pas
+            photo_url:       buildPhotoUrl(req, target.id, target.nom_utilisateur),
             // Code entier : -1 soi-même | 0 aucune | 1 je le suis | 2 il me suit | 3 mutuel
             relation:        relationToCode(relation, estSoiMeme)
         };
@@ -110,6 +115,70 @@ router.get('/:username', authenticate, async (req, res) => {
         }
 
         sendSuccess(res, 'Profil récupéré', profil);
+    } catch (error) {
+        internalErrorResponse(res, error);
+    }
+});
+
+/**
+ * GET /users/:username/photo
+ * Sert la photo de profil d'un utilisateur (publique).
+ * Le fichier est nommé par id en interne, mais l'accès se fait par username.
+ */
+router.get('/:username/photo', async (req, res) => {
+    try {
+        const target = await getUserByUsername(req.params.username);
+        if (!target || !photoExists(target.id)) {
+            return notFoundResponse(res, 'Photo de profil');
+        }
+        res.set('Cache-Control', 'public, max-age=86400'); // 1 jour
+        res.sendFile(getPhotoPath(target.id));
+    } catch (error) {
+        internalErrorResponse(res, error);
+    }
+});
+
+/**
+ * POST /users/me/photo
+ * Uploader / remplacer sa photo de profil.
+ * Form-data : champ "photo" (jpeg, png, webp, gif, max 5 Mo).
+ * L'image est convertie en .webp 512x512 et nommée {id}.webp.
+ */
+router.post('/me/photo', authenticate, (req, res) => {
+    uploadPhoto(req, res, async (err) => {
+        if (err) {
+            if (err.code === 'LIMIT_FILE_SIZE') {
+                return sendError(res, 'Image trop volumineuse (max 5 Mo)', 413, null, 'FILE_TOO_LARGE');
+            }
+            if (err.message === 'FORMAT_INVALIDE') {
+                return sendError(res, 'Format non supporté (jpeg, png, webp, gif)', 400, null, 'INVALID_FORMAT');
+            }
+            return sendError(res, "\u00c9chec de l'upload", 400, null, 'UPLOAD_ERROR');
+        }
+        if (!req.file) {
+            return sendError(res, 'Aucun fichier fourni (champ "photo")', 400, null, 'NO_FILE');
+        }
+        try {
+            await savePhoto(req.file.buffer, req.userId);
+            const me = await getUserById(req.userId, ['nom_utilisateur']);
+            sendSuccess(res, 'Photo de profil mise à jour', {
+                photo_url: buildPhotoUrl(req, req.userId, me?.nom_utilisateur)
+            });
+        } catch (error) {
+            internalErrorResponse(res, error);
+        }
+    });
+});
+
+/**
+ * DELETE /users/me/photo
+ * Supprimer sa photo de profil.
+ */
+router.delete('/me/photo', authenticate, (req, res) => {
+    try {
+        const supprime = deletePhoto(req.userId);
+        if (!supprime) return notFoundResponse(res, 'Photo de profil');
+        sendSuccess(res, 'Photo de profil supprimée');
     } catch (error) {
         internalErrorResponse(res, error);
     }

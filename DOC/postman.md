@@ -285,13 +285,69 @@ Onglet 1 (Bob) émet :
 
 ---
 
+## Scénario 5 — Photo de profil
+
+### 5.1 Uploader sa photo
+```
+POST {{base_url}}/users/me/photo
+Authorization: Bearer {{token_alice}}
+Body : form-data
+  Key  : photo   (type = File)
+  Value: <choisir une image .jpg/.png/.webp>
+```
+→ `200`
+```json
+{
+  "success": true,
+  "message": "Photo de profil mise à jour",
+  "data": { "photo_url": "http://<host>/users/alice/photo?v=1718999999" }
+}
+```
+> L'image est convertie en `.webp` 512x512 et stockée en interne sous `{id}.webp`,
+> mais l'accès public se fait **par username** (l'id n'est jamais exposé).
+
+### 5.2 Vérifier : la photo apparaît dans le profil public
+```
+GET {{base_url}}/users/alice
+Authorization: Bearer {{token_bob}}
+```
+→ champ `photo_url` rempli (ou `null` si pas de photo)
+
+### 5.3 Charger l'image directement (public, pas d'auth)
+```
+GET {{base_url}}/users/alice/photo
+```
+→ l'image s'affiche (404 si l'utilisateur n'a pas de photo)
+
+### 5.4 Format invalide — doit échouer
+```
+POST {{base_url}}/users/me/photo
+Body : form-data → photo = <un fichier .pdf>
+```
+→ `400` `INVALID_FORMAT`
+
+### 5.5 Fichier trop gros (> 5 Mo) — doit échouer
+→ `413` `FILE_TOO_LARGE`
+
+### 5.6 Supprimer sa photo
+```
+DELETE {{base_url}}/users/me/photo
+Authorization: Bearer {{token_alice}}
+```
+→ `200` — `photo_url` redevient `null` dans les profils
+
+---
+
 ## Récapitulatif des routes REST
 
 | Méthode | URL | Auth | Description |
 |---|---|---|---|
-| `GET` | `/users/:username` | ✅ | Profil public filtré par visibilité |
+| `GET` | `/users/:username` | ✅ | Profil public filtré par visibilité (+ `photo_url`) |
 | `GET` | `/users/me/visibilite` | ✅ | Voir ses paramètres de visibilité |
 | `PUT` | `/users/me/visibilite` | ✅ | Modifier ses paramètres de visibilité |
+| `GET` | `/users/:username/photo` | ❌ | Image de profil servie par username (publique) |
+| `POST` | `/users/me/photo` | ✅ | Uploader/remplacer sa photo (form-data `photo`) |
+| `DELETE` | `/users/me/photo` | ✅ | Supprimer sa photo |
 
 > `follow` et `unfollow` sont gérés **uniquement via Socket** — pas de route REST.
 
