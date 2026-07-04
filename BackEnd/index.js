@@ -7,6 +7,7 @@ import adminUserRoutes from './routes/admin/users.routes.js';
 import userRoutes from './routes/users.routes.js';
 import coiffeurRoutes from './routes/coiffeurs.routes.js';
 import publicationRoutes from './routes/publications.routes.js';
+import rendezVousRoutes from './routes/rendezVous.routes.js';
 import conversationRoutes from './routes/conversations.routes.js';
 import { initSocket } from './socket/index.js';
 import { setAllUsersOffline } from './dataBase/utils/user.js';
@@ -34,6 +35,7 @@ app.use('/admin/users', adminUserRoutes);
 app.use('/users', userRoutes);
 app.use('/coiffeurs', coiffeurRoutes);
 app.use('/publications', publicationRoutes);
+app.use('/rendez-vous', rendezVousRoutes);
 app.use('/conversations', conversationRoutes);
 
 // Route de test
@@ -47,6 +49,7 @@ app.get('/', (req, res) => {
             users: '/users',
             coiffeurs: '/coiffeurs',
             publications: '/publications',
+            rendezVous: '/rendez-vous',
             conversations: '/conversations'
         }
     });

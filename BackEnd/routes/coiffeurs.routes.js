@@ -12,6 +12,10 @@ import {
 } from '../dataBase/utils/prestation.js';
 import { upsertAvis, listAvis, getAvisByClient, deleteAvis } from '../dataBase/utils/avis.js';
 import {
+    createDisponibilite, listDisponibilites, deleteDisponibilite,
+    createException, listExceptions, deleteException, getCreneauxLibres
+} from '../dataBase/utils/disponibilite.js';
+import {
     saveProPhoto, deleteProPhoto, getProPhotoPath, proPhotoExists, buildProPhotoUrl,
     saveBanner, deleteBanner, getBannerPath, bannerExists, buildBannerUrl
 } from '../utils/coiffeurMedia.js';
@@ -420,6 +424,122 @@ router.delete('/:username/avis', authenticate, async (req, res) => {
         const ok = await deleteAvis(req.userId, target.id);
         if (!ok) return notFoundResponse(res, 'Avis');
         sendSuccess(res, 'Avis supprimé');
+    } catch (error) {
+        internalErrorResponse(res, error);
+    }
+});
+
+/**
+ * ============================================
+ * DISPONIBILITÉS ET CRÉNEAUX
+ * ============================================
+ */
+
+/** GET /coiffeurs/:username/disponibilites — liste les disponibilités récurrentes. */
+router.get('/:username/disponibilites', async (req, res) => {
+    try {
+        const target = await getUserByUsername(req.params.username);
+        if (!target) return notFoundResponse(res, 'Utilisateur');
+        const disponibilites = await listDisponibilites(target.id);
+        sendSuccess(res, `${disponibilites.length} disponibilité(s)`, { disponibilites });
+    } catch (error) {
+        internalErrorResponse(res, error);
+    }
+});
+
+/** GET /coiffeurs/:username/creneaux?date=YYYY-MM-DD&duree_min=...&prestation_id=... — créneaux libres. */
+router.get('/:username/creneaux', authenticate, async (req, res) => {
+    try {
+        const target = await getUserByUsername(req.params.username);
+        if (!target) return notFoundResponse(res, 'Utilisateur');
+
+        const date = req.query.date;
+        if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+            return sendError(res, 'Date requise (YYYY-MM-DD)', 400, null, 'INVALID_DATE');
+        }
+
+        let dureeMin = parseInt(req.query.duree_min);
+        if (isNaN(dureeMin) || dureeMin <= 0) {
+            const prestationId = req.query.prestation_id ? parseInt(req.query.prestation_id) : null;
+            if (prestationId) {
+                const p = await getPrestationById(prestationId);
+                dureeMin = p?.duree_min || 30;
+            } else {
+                dureeMin = 30;
+            }
+        }
+
+        const creneaux = await getCreneauxLibres(target.id, date, dureeMin);
+        sendSuccess(res, `${creneaux.length} créneau(x) disponible(s)`, { creneaux });
+    } catch (error) {
+        internalErrorResponse(res, error);
+    }
+});
+
+/** POST /coiffeurs/me/disponibilites — crée une disponibilité. */
+router.post('/me/disponibilites', coiffeurOnly, async (req, res) => {
+    try {
+        const jourSemaine = parseInt(req.body.jour_semaine);
+        const heureDebut = (req.body.heure_debut || '').trim();
+        const heureFin = (req.body.heure_fin || '').trim();
+
+        if (isNaN(jourSemaine) || jourSemaine < 0 || jourSemaine > 6) {
+            return sendError(res, 'jour_semaine invalide (0-6)', 400, null, 'INVALID_JOUR');
+        }
+        if (!/^\d{2}:\d{2}$/.test(heureDebut) || !/^\d{2}:\d{2}$/.test(heureFin)) {
+            return sendError(res, 'heure_debut et heure_fin requises (HH:MM)', 400, null, 'INVALID_HEURE');
+        }
+
+        const dispo = await createDisponibilite({
+            coiffeurId: req.userId, jourSemaine, heureDebut, heureFin
+        });
+        sendSuccess(res, 'Disponibilité créée', { disponibilite: dispo }, 201);
+    } catch (error) {
+        internalErrorResponse(res, error);
+    }
+});
+
+/** DELETE /coiffeurs/me/disponibilites/:id — supprime une disponibilité. */
+router.delete('/me/disponibilites/:id', coiffeurOnly, async (req, res) => {
+    try {
+        const id = parseInt(req.params.id);
+        if (isNaN(id)) return sendError(res, 'id invalide', 400, null, 'INVALID_ID');
+        const ok = await deleteDisponibilite(id, req.userId);
+        if (!ok) return notFoundResponse(res, 'Disponibilité');
+        sendSuccess(res, 'Disponibilité supprimée');
+    } catch (error) {
+        internalErrorResponse(res, error);
+    }
+});
+
+/** POST /coiffeurs/me/exceptions — crée une exception (jour ou créneau bloqué). */
+router.post('/me/exceptions', coiffeurOnly, async (req, res) => {
+    try {
+        const date = req.body.date;
+        if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+            return sendError(res, 'Date requise (YYYY-MM-DD)', 400, null, 'INVALID_DATE');
+        }
+        const heureDebut = req.body.heure_debut ? String(req.body.heure_debut).trim() : null;
+        const heureFin = req.body.heure_fin ? String(req.body.heure_fin).trim() : null;
+        const raison = req.body.raison ? String(req.body.raison).trim() : null;
+
+        const exc = await createException({
+            coiffeurId: req.userId, date, heureDebut, heureFin, raison
+        });
+        sendSuccess(res, 'Exception créée', { exception: exc }, 201);
+    } catch (error) {
+        internalErrorResponse(res, error);
+    }
+});
+
+/** DELETE /coiffeurs/me/exceptions/:id — supprime une exception. */
+router.delete('/me/exceptions/:id', coiffeurOnly, async (req, res) => {
+    try {
+        const id = parseInt(req.params.id);
+        if (isNaN(id)) return sendError(res, 'id invalide', 400, null, 'INVALID_ID');
+        const ok = await deleteException(id, req.userId);
+        if (!ok) return notFoundResponse(res, 'Exception');
+        sendSuccess(res, 'Exception supprimée');
     } catch (error) {
         internalErrorResponse(res, error);
     }
