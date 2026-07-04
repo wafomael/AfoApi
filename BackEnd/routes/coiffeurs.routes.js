@@ -275,8 +275,8 @@ router.delete('/me/prestations/:id', coiffeurOnly, async (req, res) => {
  * ============================================
  */
 
-/** GET /coiffeurs/prestations/:id/media/:index — sert un média de prestation. */
-router.get('/prestations/:id/media/:index', authenticate, async (req, res) => {
+/** GET /coiffeurs/prestations/:id/media/:index — sert un média de prestation (publique). */
+router.get('/prestations/:id/media/:index', async (req, res) => {
     try {
         const id = parseInt(req.params.id);
         const index = parseInt(req.params.index);

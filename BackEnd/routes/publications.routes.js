@@ -171,8 +171,8 @@ router.delete('/:id/cauris', authenticate, async (req, res) => {
  * ============================================
  */
 
-/** GET /publications/:id/media/:index — sert un média de publication. */
-router.get('/:id/media/:index', authenticate, async (req, res) => {
+/** GET /publications/:id/media/:index — sert un média de publication (publique). */
+router.get('/:id/media/:index', async (req, res) => {
     try {
         const id = parseInt(req.params.id);
         const index = parseInt(req.params.index);
