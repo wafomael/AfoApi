@@ -21,7 +21,12 @@ export const SOCKET_EVENTS = {
     FOLLOW:   'follow',   // client → serveur : rejoindre la room de présence d'un username (si autorisé)
     UNFOLLOW: 'unfollow', // client → serveur : quitter la room de présence d'un username
 
-    // (Futur) Chat
-    // MESSAGE_SEND: 'message:send',
-    // MESSAGE_NEW: 'message:new',
+    // Messagerie (chat)
+    CONVERSATION_OPEN:    'conversation:open',    // client → serveur : rejoindre la room conv:<id> (si participant)
+    CONVERSATION_CLOSE:   'conversation:close',   // client → serveur : quitter la room conv:<id>
+    MESSAGE_SEND:         'message:send',         // client → serveur : envoyer un message (avec ack)
+    MESSAGE_NEW:          'message:new',          // serveur → room conv:<id> : nouveau message
+    MESSAGE_READ:         'message:read',         // client → serveur : signaler la lecture d'une conversation
+    MESSAGES_READ:        'messages:read',        // serveur → user:<emetteur> : ses messages ont été lus
+    CONVERSATION_UPDATED: 'conversation:updated', // serveur → user:<destinataire> : maj liste + badge non-lus
 };

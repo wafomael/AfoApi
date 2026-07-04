@@ -30,3 +30,38 @@ export const uploadPhoto = multer({
     fileFilter,
     limits: { fileSize: MAX_UPLOAD_SIZE }
 }).single('photo');
+
+/**
+ * Middleware d'upload d'un média de message.
+ * Champ attendu dans le form-data : "media".
+ */
+export const uploadMessageMedia = multer({
+    storage,
+    fileFilter,
+    limits: { fileSize: MAX_UPLOAD_SIZE }
+}).single('media');
+
+/**
+ * Middleware d'upload d'une image unique (photo pro / bannière coiffeur).
+ * Champ attendu dans le form-data : "image".
+ */
+export const uploadSingleImage = multer({
+    storage,
+    fileFilter,
+    limits: { fileSize: MAX_UPLOAD_SIZE }
+}).single('image');
+
+/**
+ * Nombre max de médias par publication / prestation.
+ */
+export const MAX_MEDIAS = 10;
+
+/**
+ * Middleware d'upload de plusieurs médias (publication / prestation).
+ * Champ attendu dans le form-data : "medias" (répété).
+ */
+export const uploadMedias = multer({
+    storage,
+    fileFilter,
+    limits: { fileSize: MAX_UPLOAD_SIZE }
+}).array('medias', MAX_MEDIAS);

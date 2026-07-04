@@ -2,6 +2,7 @@ import { Server } from 'socket.io';
 import { authenticateSocket } from './middleware/auth.js';
 import { registerTestHandlers } from './handlers/test.handler.js';
 import { registerPresenceHandlers } from './handlers/presence.handler.js';
+import { registerChatHandlers } from './handlers/chat.handler.js';
 
 /**
  * Initialise Socket.IO sur le serveur HTTP existant.
@@ -29,12 +30,17 @@ export const initSocket = (server) => {
     io.on('connection', (socket) => {
         console.log(`[socket] connecté: ${socket.id} (userId: ${socket.userId ?? 'anonyme'})`);
 
+        // Room personnelle (tous les appareils d'un user) : permet de notifier
+        // un utilisateur (liste de conversations, badge non-lus, et plus tard
+        // les rendez-vous) même s'il n'a aucune conversation ouverte.
+        if (socket.userId) socket.join(`user:${socket.userId}`);
+
         // Enregistrer les handlers par fonctionnalité
         registerTestHandlers(io, socket);
         registerPresenceHandlers(io, socket).catch((err) =>
             console.error('[presence] erreur init handler:', err.message)
         );
-        // (Futur) registerChatHandlers(io, socket);
+        registerChatHandlers(io, socket);
 
         socket.on('disconnect', (reason) => {
             console.log(`[socket] déconnecté: ${socket.id} (${reason})`);

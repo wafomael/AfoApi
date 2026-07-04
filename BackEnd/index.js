@@ -5,6 +5,9 @@ import cors from 'cors';
 import authRoutes from './routes/auth.routes.refresh.js';
 import adminUserRoutes from './routes/admin/users.routes.js';
 import userRoutes from './routes/users.routes.js';
+import coiffeurRoutes from './routes/coiffeurs.routes.js';
+import publicationRoutes from './routes/publications.routes.js';
+import conversationRoutes from './routes/conversations.routes.js';
 import { initSocket } from './socket/index.js';
 import { setAllUsersOffline } from './dataBase/utils/user.js';
 import { httpLogger } from './middleware/logger.js';
@@ -29,6 +32,9 @@ app.use(httpLogger);
 app.use('/auth', authRoutes);
 app.use('/admin/users', adminUserRoutes);
 app.use('/users', userRoutes);
+app.use('/coiffeurs', coiffeurRoutes);
+app.use('/publications', publicationRoutes);
+app.use('/conversations', conversationRoutes);
 
 // Route de test
 app.get('/', (req, res) => {
@@ -37,7 +43,11 @@ app.get('/', (req, res) => {
         version: '1.0.0',
         endpoints: {
             auth: '/auth',
-            admin: '/admin/users'
+            admin: '/admin/users',
+            users: '/users',
+            coiffeurs: '/coiffeurs',
+            publications: '/publications',
+            conversations: '/conversations'
         }
     });
 });
@@ -65,7 +75,9 @@ app.use((err, req, res, next) => {
 const server = http.createServer(app);
 
 // Brancher Socket.IO sur le même serveur HTTP
-initSocket(server);
+const io = initSocket(server);
+// Rendre l'instance io accessible aux routes REST (ex: broadcast d'un média)
+app.set('io', io);
 
 server.listen(PORT, async () => {
     console.log(`Serveur démarré sur http://localhost:${PORT}`);
