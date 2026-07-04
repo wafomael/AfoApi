@@ -41,20 +41,28 @@ const normaliseTableau = (val) => {
  */
 
 /**
- * GET /users?search=<texte>&limit=10
+ * GET /users?search=<texte>&limit=10&role=coiffeur&is_pro=true
  * Recherche d'utilisateurs par prénom, nom ou nom d'utilisateur.
+ * Filtres optionnels : role, is_pro.
  * Renvoie une liste légère destinée à l'autocomplétion de recherche.
  * NB: doit rester déclarée AVANT la route '/:username'.
  */
 router.get('/', authenticate, async (req, res) => {
     try {
         const search = (req.query.search || '').trim();
-        if (search.length < 1) {
+        const role = req.query.role ? String(req.query.role).trim() : null;
+        const isPro = req.query.is_pro === 'true' ? true : undefined;
+
+        if (search.length < 1 && !role) {
             return sendSuccess(res, 'Aucun terme de recherche', { users: [] });
         }
 
         const limit = Math.min(parseInt(req.query.limit) || 10, 30);
-        const { users } = await listUsers({ search }, { limit, offset: 0 });
+        const filters = { search };
+        if (role) filters.role = role;
+        if (isPro !== undefined) filters.is_pro = isPro;
+
+        const { users } = await listUsers(filters, { limit, offset: 0 });
 
         const resultats = users.map((u) => ({
             nom_utilisateur: u.nom_utilisateur,
