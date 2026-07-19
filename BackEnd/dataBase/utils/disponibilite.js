@@ -70,6 +70,33 @@ export const deleteException = async (id, coiffeurId) => {
     return result.rowCount > 0;
 };
 
+export const isCreneauDansDisponibilite = async (coiffeurId, dateDebut, dateFin) => {
+    const sql = `
+        SELECT EXISTS (
+            SELECT 1
+            FROM ${DISPO} d
+            WHERE d.coiffeur_id = $1
+              AND d.actif = TRUE
+              AND d.jour_semaine = EXTRACT(DOW FROM $2::timestamp)::smallint
+              AND d.heure_debut <= $2::timestamp::time
+              AND d.heure_fin >= $3::timestamp::time
+        )
+        AND NOT EXISTS (
+            SELECT 1
+            FROM ${EXCEPTION} e
+            WHERE e.coiffeur_id = $1
+              AND e.date = $2::timestamp::date
+              AND e.actif = TRUE
+              AND (
+                  e.heure_debut IS NULL
+                  OR (e.heure_debut < $3::timestamp::time AND e.heure_fin > $2::timestamp::time)
+              )
+        ) AS disponible
+    `;
+    const result = await query(sql, [coiffeurId, dateDebut, dateFin]);
+    return result.rows[0].disponible;
+};
+
 /**
  * Retourne les créneaux libres d'un coiffeur pour une date et une durée données.
  * @param {number} coiffeurId

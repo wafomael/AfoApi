@@ -88,9 +88,6 @@ router.post('/connexion', validate(connexionSchema), async (req, res) => {
             return sendError(res, 'Email ou mot de passe incorrect', 401, null, 'INVALID_CREDENTIALS');
         }
 
-        // Mettre à jour statut
-        await userDB.updateOnlineStatus(credentials.id, true);
-
         // Récupérer données complètes
         const user = await userDB.getUserById(credentials.id);
 
@@ -131,7 +128,6 @@ router.post('/deconnexion', authenticate, logoutWithRevocation);
 router.post('/deconnexion-globale', authenticate, async (req, res) => {
     try {
         const count = await refreshTokenDB.revokeAllUserTokens(req.userId);
-        await userDB.updateOnlineStatus(req.userId, false);
 
         sendSuccess(res, `Déconnexion réussie sur ${count} appareil(s)`);
     } catch (error) {

@@ -17,7 +17,7 @@ const TABLE_NAME = 's_afro_dev.utilisateur';
 
 export const getUserById = async (id, fields = null) => {
     const selectFields = fields ? fields.join(', ') : 
-        'id, nom_utilisateur, email, prenom, nom, date_naissance, sexe, ville, latitude, longitude, telephone, role, is_pro, statut, is_online, created_at, updated_at';
+        'id, nom_utilisateur, email, prenom, nom, date_naissance, sexe, ville, latitude, longitude, telephone, role, is_pro, statut, created_at, updated_at';
     
     const sql = `SELECT ${selectFields} FROM ${TABLE_NAME} WHERE id = $1 AND statut = 'actif'`;
     const result = await query(sql, [id]);
@@ -42,7 +42,7 @@ export const getUserByEmail = async (email) => {
  */
 export const getUserByUsername = async (nomUtilisateur) => {
     const sql = `SELECT id, nom_utilisateur, email, prenom, nom, role, is_pro, statut,
-                        is_online, ville, latitude, longitude, telephone, date_naissance
+                        ville, latitude, longitude, telephone, date_naissance
                  FROM ${TABLE_NAME} 
                  WHERE nom_utilisateur = $1 AND statut = 'actif'`;
     const result = await query(sql, [nomUtilisateur]);
@@ -50,26 +50,11 @@ export const getUserByUsername = async (nomUtilisateur) => {
 };
 
 /**
- * Résoudre une liste de noms d'utilisateur en (id, nom_utilisateur).
- * Utilisé par la présence : le client fournit ses contacts (usernames),
- * on récupère leurs id pour consulter leur état en ligne.
- * @param {string[]} usernames
- * @returns {Promise<Array<{id: number, nom_utilisateur: string}>>}
- */
-export const getUsersByUsernames = async (usernames) => {
-    if (!Array.isArray(usernames) || usernames.length === 0) return [];
-    const sql = `SELECT id, nom_utilisateur FROM ${TABLE_NAME} 
-                 WHERE nom_utilisateur = ANY($1) AND statut = 'actif'`;
-    const result = await query(sql, [usernames]);
-    return result.rows;
-};
-
-/**
  * Lister les utilisateurs avec des filtres utiles.
  * Une seule fonction générique : on filtre selon le besoin (clients,
- * coiffeurs, en ligne, par ville, recherche texte...).
+ * coiffeurs, par ville, recherche texte...).
  *
- * @param {object} filters - { role, statut, is_pro, ville, is_online, search }
+ * @param {object} filters - { role, statut, is_pro, ville, search }
  * @param {object} pagination - { limit, offset }
  * @returns {Promise<{users: array, total: number}>}
  */
@@ -97,11 +82,6 @@ export const listUsers = async (filters = {}, pagination = { limit: 20, offset: 
         params.push(filters.ville);
     }
 
-    if (filters.is_online !== undefined) {
-        conditions.push(`is_online = $${i++}`);
-        params.push(filters.is_online);
-    }
-
     if (filters.search) {
         conditions.push(`(prenom ILIKE $${i} OR nom ILIKE $${i} OR nom_utilisateur ILIKE $${i} OR email ILIKE $${i})`);
         params.push(`%${filters.search}%`);
@@ -116,7 +96,7 @@ export const listUsers = async (filters = {}, pagination = { limit: 20, offset: 
     const total = parseInt(countResult.rows[0].count);
 
     // Requête données
-    const selectFields = 'id, nom_utilisateur, email, prenom, nom, date_naissance, sexe, ville, latitude, longitude, telephone, role, is_pro, statut, is_online, last_activity, created_at';
+    const selectFields = 'id, nom_utilisateur, email, prenom, nom, date_naissance, sexe, ville, latitude, longitude, telephone, role, is_pro, statut, created_at';
     const sql = `SELECT ${selectFields} FROM ${TABLE_NAME} 
                  WHERE ${whereClause} 
                  ORDER BY is_pro DESC, created_at DESC 
@@ -304,30 +284,6 @@ export const updateUser = async (id, updates) => {
     
     const result = await query(sql, values);
     return result.rows[0] || null;
-};
-
-/**
- * Mettre à jour le statut online/offline
- * @param {number} id
- * @param {boolean} isOnline
- * @returns {Promise<void>}
- */
-export const updateOnlineStatus = async (id, isOnline) => {
-    const sql = `UPDATE ${TABLE_NAME} SET is_online = $1, last_activity = NOW() WHERE id = $2`;
-    await query(sql, [isOnline, id]);
-};
-
-/**
- * Remettre TOUS les utilisateurs hors ligne.
- * À appeler au démarrage du serveur : après un crash/restart, les sockets
- * sont toutes tombées mais la colonne is_online pourrait rester à true.
- * On repart donc d'un état propre (tout offline), les clients se
- * reconnecteront et repasseront online d'eux-mêmes.
- * @returns {Promise<void>}
- */
-export const setAllUsersOffline = async () => {
-    const sql = `UPDATE ${TABLE_NAME} SET is_online = FALSE WHERE is_online = TRUE`;
-    await query(sql);
 };
 
 /**

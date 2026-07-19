@@ -239,16 +239,6 @@ export const updateUserAdminSchema = updateProfilSchema.keys({
         })
 });
 
-// Schéma pour la mise à jour du statut online
-export const updateOnlineStatusSchema = Joi.object({
-    is_online: Joi.boolean()
-        .required()
-        .messages({
-            'boolean.base': 'is_online doit être un booléen',
-            'any.required': 'Le statut is_online est requis'
-        })
-});
-
 // Schéma pour la pagination et les filtres
 export const listUsersQuerySchema = Joi.object({
     page: Joi.number()
@@ -294,11 +284,6 @@ export const listUsersQuerySchema = Joi.object({
         .max(100)
         .messages({
             'string.max': 'Le nom de la ville ne doit pas dépasser 100 caractères'
-        }),
-
-    is_online: Joi.boolean()
-        .messages({
-            'boolean.base': 'is_online doit être un booléen'
         }),
 
     statut: Joi.string()

@@ -7,8 +7,7 @@ import * as userDB from '../../dataBase/utils/user.js';
 import {
     createUserAdminSchema,
     updateUserAdminSchema,
-    listUsersQuerySchema,
-    updateOnlineStatusSchema
+    listUsersQuerySchema
 } from '../../validators/user.validator.js';
 
 const router = Router();
@@ -30,7 +29,7 @@ router.use(requireAuthAdmin);
  */
 router.get('/', validate(listUsersQuerySchema, 'query'), async (req, res) => {
     try {
-        const { role, search, is_pro, ville, is_online, statut, page, limit } = req.query;
+        const { role, search, is_pro, ville, statut, page, limit } = req.query;
 
         const pagination = {
             limit: limit,
@@ -42,7 +41,6 @@ router.get('/', validate(listUsersQuerySchema, 'query'), async (req, res) => {
         if (search) filters.search = search;
         if (is_pro !== undefined) filters.is_pro = is_pro;
         if (ville) filters.ville = ville;
-        if (is_online !== undefined) filters.is_online = is_online;
         if (statut) filters.statut = statut;
 
         const { users, total } = await userDB.listUsers(filters, pagination);
@@ -248,32 +246,6 @@ router.delete('/:id', async (req, res) => {
         }
 
         sendSuccess(res, `Utilisateur #${userId} désactivé avec succès`);
-
-    } catch (error) {
-        internalErrorResponse(res, error);
-    }
-});
-
-/**
- * POST /admin/users/:id/activity
- * Modifier le statut online d'un utilisateur (forcer déconnexion)
- */
-router.post('/:id/activity', validate(updateOnlineStatusSchema), async (req, res) => {
-    try {
-        const userId = parseInt(req.params.id);
-        const { is_online } = req.body;
-
-        const user = await userDB.getUserById(userId);
-        if (!user) {
-            return notFoundResponse(res, 'Utilisateur');
-        }
-
-        await userDB.updateOnlineStatus(userId, is_online);
-
-        sendSuccess(res, `Statut de ${user.prenom} ${user.nom} mis à jour`, {
-            userId,
-            is_online
-        });
 
     } catch (error) {
         internalErrorResponse(res, error);

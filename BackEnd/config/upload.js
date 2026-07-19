@@ -11,8 +11,6 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 export const UPLOAD_ROOT = join(__dirname, '..', 'uploads');
 /** Photos de profil {id}.webp + photo pro {id}_pro.webp + bannière {id}_banner.webp */
 export const PROFIL_DIR  = join(UPLOAD_ROOT, 'profils');
-/** Médias des messages : {conversation_id}_{message_id}.webp */
-export const MESSAGE_DIR = join(UPLOAD_ROOT, 'messages');
 /** Médias des publications : pub_{publication_id}_{index}.webp */
 export const PUBLICATION_DIR = join(UPLOAD_ROOT, 'publications');
 /** Médias des prestations : presta_{prestation_id}_{index}.webp */
@@ -30,7 +28,6 @@ export const MAX_UPLOAD_SIZE = 5 * 1024 * 1024; // 5 Mo
  */
 export const ensureUploadDirs = () => {
     fs.mkdirSync(PROFIL_DIR, { recursive: true });
-    fs.mkdirSync(MESSAGE_DIR, { recursive: true });
     fs.mkdirSync(PUBLICATION_DIR, { recursive: true });
     fs.mkdirSync(PRESTATION_DIR, { recursive: true });
 };

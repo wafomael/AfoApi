@@ -47,8 +47,7 @@ export const generateTokenPair = (user, refreshToken, metadata = {}) => {
             nom: user.nom,
             role: user.role,
             statut: user.statut,
-            is_pro: user.is_pro,
-            is_online: user.is_online
+            is_pro: user.is_pro
         },
         ...metadata
     };
@@ -185,12 +184,6 @@ export const logoutWithRevocation = async (req, res) => {
         // Révoquer le refresh token si fourni
         if (refreshToken) {
             await revokeRefreshToken(refreshToken);
-        }
-
-        // Optionnel: mettre offline
-        if (req.userId) {
-            const { updateOnlineStatus } = await import('../dataBase/utils/user.js');
-            await updateOnlineStatus(req.userId, false);
         }
 
         res.json({

@@ -27,6 +27,16 @@ export const getRendezVousById = async (id) => {
     return result.rows[0] || null;
 };
 
+export const getRendezVousTerminePourAvis = async (id, clientId, coiffeurId) => {
+    const result = await query(
+        `SELECT id, client_id, coiffeur_id
+         FROM ${RDV}
+         WHERE id = $1 AND client_id = $2 AND coiffeur_id = $3 AND statut = 'termine'`,
+        [id, clientId, coiffeurId]
+    );
+    return result.rows[0] || null;
+};
+
 /** Récupère un RDV enrichi (avec noms, prestation). */
 export const getRendezVousDetailById = async (id) => {
     const sql = `
@@ -86,12 +96,12 @@ export const listRendezVous = async ({ clientId, coiffeurId, statuts = [], limit
     return result.rows;
 };
 
-/** Met à jour le statut d'un rendez-vous. */
-export const updateRendezVousStatut = async (id, statut) => {
+/** Met à jour le statut d'un rendez-vous seulement depuis le statut attendu. */
+export const updateRendezVousStatut = async (id, statutActuel, nouveauStatut) => {
     const result = await query(
-        `UPDATE ${RDV} SET statut = $2 WHERE id = $1
+        `UPDATE ${RDV} SET statut = $3 WHERE id = $1 AND statut = $2
          RETURNING id, client_id, coiffeur_id, prestation_id, date_debut, date_fin, statut, prix, unite_prix, note_client`,
-        [id, statut]
+        [id, statutActuel, nouveauStatut]
     );
     return result.rows[0] || null;
 };

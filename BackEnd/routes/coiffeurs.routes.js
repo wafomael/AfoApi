@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { authenticate, requirePermission } from '../middleware/auth.js';
+import { validate } from '../middleware/validate.js';
 import { PERMISSION_LEVELS } from '../utils/permissions.js';
 import { uploadSingleImage, uploadMedias } from '../middleware/upload.js';
 import { sendSuccess, sendError, internalErrorResponse, notFoundResponse } from '../utils/apiResponse.js';
@@ -11,6 +12,11 @@ import {
     updatePrestation, setPrestationMediaCount, deactivatePrestation
 } from '../dataBase/utils/prestation.js';
 import { upsertAvis, listAvis, getAvisByClient, deleteAvis } from '../dataBase/utils/avis.js';
+import { getRendezVousTerminePourAvis } from '../dataBase/utils/rendezVous.js';
+import {
+    avisSchema, creneauxQuerySchema, disponibiliteSchema,
+    exceptionDisponibiliteSchema, rendezVousIdQuerySchema
+} from '../validators/rendezVous.validator.js';
 import {
     createDisponibilite, listDisponibilites, deleteDisponibilite,
     createException, listExceptions, deleteException, getCreneauxLibres
@@ -389,7 +395,7 @@ router.get('/:username/avis', authenticate, async (req, res) => {
  * POST /coiffeurs/:username/avis
  * Body: { note (1-5), commentaire? }. Un seul avis par client/coiffeur (upsert).
  */
-router.post('/:username/avis', authenticate, async (req, res) => {
+router.post('/:username/avis', authenticate, validate(avisSchema), async (req, res) => {
     try {
         const target = await getUserByUsername(req.params.username);
         if (!target) return notFoundResponse(res, 'Utilisateur');
@@ -400,14 +406,14 @@ router.post('/:username/avis', authenticate, async (req, res) => {
         const coiffeur = await getProfilCoiffeur(target.id);
         if (!coiffeur) return sendError(res, "Cet utilisateur n'est pas un coiffeur", 400, null, 'NOT_A_COIFFEUR');
 
-        const note = parseInt(req.body.note);
-        if (isNaN(note) || note < 1 || note > 5) {
-            return sendError(res, 'La note doit être comprise entre 1 et 5', 400, null, 'INVALID_NOTE');
+        const { rendez_vous_id: rendezVousId, note, commentaire } = req.body;
+        const rendezVous = await getRendezVousTerminePourAvis(rendezVousId, req.userId, target.id);
+        if (!rendezVous) {
+            return sendError(res, 'Un avis exige un rendez-vous terminé avec ce coiffeur', 409, null, 'REVIEW_RENDEZ_VOUS_REQUIRED');
         }
-        const commentaire = req.body.commentaire ? String(req.body.commentaire).trim() : null;
 
         const avis = await upsertAvis({
-            clientId: req.userId, coiffeurId: target.id, note, commentaire
+            rendezVousId, clientId: req.userId, coiffeurId: target.id, note, commentaire: commentaire || null
         });
         sendSuccess(res, 'Avis enregistré', { avis });
     } catch (error) {
@@ -416,12 +422,12 @@ router.post('/:username/avis', authenticate, async (req, res) => {
 });
 
 /** DELETE /coiffeurs/:username/avis — supprime son propre avis. */
-router.delete('/:username/avis', authenticate, async (req, res) => {
+router.delete('/:username/avis', authenticate, validate(rendezVousIdQuerySchema, 'query'), async (req, res) => {
     try {
         const target = await getUserByUsername(req.params.username);
         if (!target) return notFoundResponse(res, 'Utilisateur');
 
-        const ok = await deleteAvis(req.userId, target.id);
+        const ok = await deleteAvis(req.userId, target.id, req.query.rendez_vous_id);
         if (!ok) return notFoundResponse(res, 'Avis');
         sendSuccess(res, 'Avis supprimé');
     } catch (error) {
@@ -448,28 +454,18 @@ router.get('/:username/disponibilites', async (req, res) => {
 });
 
 /** GET /coiffeurs/:username/creneaux?date=YYYY-MM-DD&duree_min=...&prestation_id=... — créneaux libres. */
-router.get('/:username/creneaux', authenticate, async (req, res) => {
+router.get('/:username/creneaux', authenticate, validate(creneauxQuerySchema, 'query'), async (req, res) => {
     try {
         const target = await getUserByUsername(req.params.username);
         if (!target) return notFoundResponse(res, 'Utilisateur');
 
-        const date = req.query.date;
-        if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-            return sendError(res, 'Date requise (YYYY-MM-DD)', 400, null, 'INVALID_DATE');
+        const { date, prestation_id: prestationId } = req.query;
+        const prestation = await getPrestationById(prestationId);
+        if (!prestation || !prestation.actif || prestation.coiffeur_id !== target.id) {
+            return sendError(res, 'Prestation invalide ou indisponible', 400, null, 'INVALID_PRESTATION');
         }
 
-        let dureeMin = parseInt(req.query.duree_min);
-        if (isNaN(dureeMin) || dureeMin <= 0) {
-            const prestationId = req.query.prestation_id ? parseInt(req.query.prestation_id) : null;
-            if (prestationId) {
-                const p = await getPrestationById(prestationId);
-                dureeMin = p?.duree_min || 30;
-            } else {
-                dureeMin = 30;
-            }
-        }
-
-        const creneaux = await getCreneauxLibres(target.id, date, dureeMin);
+        const creneaux = await getCreneauxLibres(target.id, date, prestation.duree_min || 30);
         sendSuccess(res, `${creneaux.length} créneau(x) disponible(s)`, { creneaux });
     } catch (error) {
         internalErrorResponse(res, error);
@@ -477,18 +473,9 @@ router.get('/:username/creneaux', authenticate, async (req, res) => {
 });
 
 /** POST /coiffeurs/me/disponibilites — crée une disponibilité. */
-router.post('/me/disponibilites', coiffeurOnly, async (req, res) => {
+router.post('/me/disponibilites', coiffeurOnly, validate(disponibiliteSchema), async (req, res) => {
     try {
-        const jourSemaine = parseInt(req.body.jour_semaine);
-        const heureDebut = (req.body.heure_debut || '').trim();
-        const heureFin = (req.body.heure_fin || '').trim();
-
-        if (isNaN(jourSemaine) || jourSemaine < 0 || jourSemaine > 6) {
-            return sendError(res, 'jour_semaine invalide (0-6)', 400, null, 'INVALID_JOUR');
-        }
-        if (!/^\d{2}:\d{2}$/.test(heureDebut) || !/^\d{2}:\d{2}$/.test(heureFin)) {
-            return sendError(res, 'heure_debut et heure_fin requises (HH:MM)', 400, null, 'INVALID_HEURE');
-        }
+        const { jour_semaine: jourSemaine, heure_debut: heureDebut, heure_fin: heureFin } = req.body;
 
         const dispo = await createDisponibilite({
             coiffeurId: req.userId, jourSemaine, heureDebut, heureFin
@@ -500,10 +487,9 @@ router.post('/me/disponibilites', coiffeurOnly, async (req, res) => {
 });
 
 /** DELETE /coiffeurs/me/disponibilites/:id — supprime une disponibilité. */
-router.delete('/me/disponibilites/:id', coiffeurOnly, async (req, res) => {
+router.delete('/me/disponibilites/:id', coiffeurOnly, validate(rendezVousIdParamsSchema, 'params'), async (req, res) => {
     try {
-        const id = parseInt(req.params.id);
-        if (isNaN(id)) return sendError(res, 'id invalide', 400, null, 'INVALID_ID');
+        const { id } = req.params;
         const ok = await deleteDisponibilite(id, req.userId);
         if (!ok) return notFoundResponse(res, 'Disponibilité');
         sendSuccess(res, 'Disponibilité supprimée');
@@ -513,15 +499,9 @@ router.delete('/me/disponibilites/:id', coiffeurOnly, async (req, res) => {
 });
 
 /** POST /coiffeurs/me/exceptions — crée une exception (jour ou créneau bloqué). */
-router.post('/me/exceptions', coiffeurOnly, async (req, res) => {
+router.post('/me/exceptions', coiffeurOnly, validate(exceptionDisponibiliteSchema), async (req, res) => {
     try {
-        const date = req.body.date;
-        if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-            return sendError(res, 'Date requise (YYYY-MM-DD)', 400, null, 'INVALID_DATE');
-        }
-        const heureDebut = req.body.heure_debut ? String(req.body.heure_debut).trim() : null;
-        const heureFin = req.body.heure_fin ? String(req.body.heure_fin).trim() : null;
-        const raison = req.body.raison ? String(req.body.raison).trim() : null;
+        const { date, heure_debut: heureDebut, heure_fin: heureFin, raison } = req.body;
 
         const exc = await createException({
             coiffeurId: req.userId, date, heureDebut, heureFin, raison
@@ -533,10 +513,9 @@ router.post('/me/exceptions', coiffeurOnly, async (req, res) => {
 });
 
 /** DELETE /coiffeurs/me/exceptions/:id — supprime une exception. */
-router.delete('/me/exceptions/:id', coiffeurOnly, async (req, res) => {
+router.delete('/me/exceptions/:id', coiffeurOnly, validate(rendezVousIdParamsSchema, 'params'), async (req, res) => {
     try {
-        const id = parseInt(req.params.id);
-        if (isNaN(id)) return sendError(res, 'id invalide', 400, null, 'INVALID_ID');
+        const { id } = req.params;
         const ok = await deleteException(id, req.userId);
         if (!ok) return notFoundResponse(res, 'Exception');
         sendSuccess(res, 'Exception supprimée');

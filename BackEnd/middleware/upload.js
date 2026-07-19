@@ -32,16 +32,6 @@ export const uploadPhoto = multer({
 }).single('photo');
 
 /**
- * Middleware d'upload d'un média de message.
- * Champ attendu dans le form-data : "media".
- */
-export const uploadMessageMedia = multer({
-    storage,
-    fileFilter,
-    limits: { fileSize: MAX_UPLOAD_SIZE }
-}).single('media');
-
-/**
  * Middleware d'upload d'une image unique (photo pro / bannière coiffeur).
  * Champ attendu dans le form-data : "image".
  */

@@ -1,12 +1,18 @@
 import { Router } from 'express';
 import { authenticate } from '../middleware/auth.js';
+import { validate } from '../middleware/validate.js';
 import { sendSuccess, sendError, internalErrorResponse, notFoundResponse } from '../utils/apiResponse.js';
 import { getUserByUsername } from '../dataBase/utils/user.js';
 import { getPrestationById } from '../dataBase/utils/prestation.js';
 import {
     createRendezVous, getRendezVousDetailById, listRendezVous,
-    updateRendezVousStatut, deleteRendezVous, hasConflitRendezVous
+    updateRendezVousStatut
 } from '../dataBase/utils/rendezVous.js';
+import { isCreneauDansDisponibilite } from '../dataBase/utils/disponibilite.js';
+import {
+    createRendezVousSchema, listRendezVousQuerySchema,
+    rendezVousIdParamsSchema, updateRendezVousStatutSchema
+} from '../validators/rendezVous.validator.js';
 
 const router = Router();
 
@@ -17,48 +23,38 @@ const STATUTS_VALIDES = ['demande', 'confirme', 'annule', 'termine', 'non_presen
  * Crée un rendez-vous.
  * Body : { coiffeur_username, prestation_id?, date_debut, date_fin, prix?, unite_prix?, note_client? }
  */
-router.post('/', authenticate, async (req, res) => {
+router.post('/', authenticate, validate(createRendezVousSchema), async (req, res) => {
     try {
-        const username = (req.body.coiffeur_username || '').trim();
-        if (!username) return sendError(res, 'coiffeur_username requis', 400, null, 'USERNAME_REQUIRED');
+        const { coiffeur_username: username, prestation_id: prestationId, date_debut: dateDebut, date_fin: dateFin, note_client: noteClient } = req.body;
+        if (dateDebut <= new Date()) {
+            return sendError(res, 'Le rendez-vous doit être dans le futur', 400, null, 'PAST_RENDEZ_VOUS');
+        }
+        if (dateDebut.toISOString().slice(0, 10) !== dateFin.toISOString().slice(0, 10)) {
+            return sendError(res, 'Le rendez-vous doit commencer et finir le même jour', 400, null, 'MULTI_DAY_RENDEZ_VOUS');
+        }
 
         const coiffeur = await getUserByUsername(username);
         if (!coiffeur) return notFoundResponse(res, 'Coiffeur');
         if (coiffeur.id === req.userId) {
             return sendError(res, 'Vous ne pouvez pas vous réserver à vous-même', 400, null, 'SELF_RDV');
         }
-
-        const prestationId = req.body.prestation_id ? parseInt(req.body.prestation_id) : null;
-        let prix = null;
-        let unitePrix = 'forfait';
-        let dureeMin = 0;
-
-        if (prestationId) {
-            const p = await getPrestationById(prestationId);
-            if (!p || p.coiffeur_id !== coiffeur.id) {
-                return sendError(res, 'Prestation invalide', 400, null, 'INVALID_PRESTATION');
-            }
-            prix = p.prix;
-            unitePrix = p.unite_prix;
-            dureeMin = p.duree_min || 0;
+        if (coiffeur.role !== 'coiffeur') {
+            return sendError(res, "Cet utilisateur n'est pas un coiffeur", 400, null, 'NOT_A_COIFFEUR');
         }
 
-        const dateDebut = req.body.date_debut ? new Date(req.body.date_debut) : null;
-        const dateFin = req.body.date_fin ? new Date(req.body.date_fin) : null;
-        if (!dateDebut || !dateFin || isNaN(dateDebut) || isNaN(dateFin) || dateFin <= dateDebut) {
-            return sendError(res, 'Dates invalides', 400, null, 'INVALID_DATES');
+        const prestation = await getPrestationById(prestationId);
+        if (!prestation || !prestation.actif || prestation.coiffeur_id !== coiffeur.id) {
+            return sendError(res, 'Prestation invalide ou indisponible', 400, null, 'INVALID_PRESTATION');
         }
 
-        if (prestationId && dureeMin > 0) {
-            const dureeDemandee = (dateFin - dateDebut) / (60 * 1000);
-            if (dureeDemandee < dureeMin) {
-                return sendError(res, `Durée minimum ${dureeMin} min`, 400, null, 'DUREE_TOO_SHORT');
-            }
+        const dureeDemandee = (dateFin - dateDebut) / 60000;
+        if (prestation.duree_min && dureeDemandee !== prestation.duree_min) {
+            return sendError(res, `La durée doit être de ${prestation.duree_min} min`, 400, null, 'INVALID_DURATION');
         }
 
-        const conflit = await hasConflitRendezVous(coiffeur.id, dateDebut, dateFin);
-        if (conflit) {
-            return sendError(res, 'Ce créneau est déjà réservé', 409, null, 'CRENEAU_CONFLICT');
+        const disponible = await isCreneauDansDisponibilite(coiffeur.id, dateDebut, dateFin);
+        if (!disponible) {
+            return sendError(res, "Ce créneau n'est pas dans les disponibilités du coiffeur", 409, null, 'CRENEAU_INDISPONIBLE');
         }
 
         const rdv = await createRendezVous({
@@ -67,14 +63,20 @@ router.post('/', authenticate, async (req, res) => {
             prestationId,
             dateDebut,
             dateFin,
-            prix: req.body.prix !== undefined ? parseFloat(req.body.prix) : prix,
-            unitePrix: req.body.unite_prix || unitePrix,
-            noteClient: req.body.note_client ? String(req.body.note_client).trim() : null,
+            prix: prestation.prix,
+            unitePrix: prestation.unite_prix,
+            noteClient: noteClient || null
         });
 
         const detail = await getRendezVousDetailById(rdv.id);
         sendSuccess(res, 'Rendez-vous demandé', { rendez_vous: formatRendezVous(detail) }, 201);
     } catch (error) {
+        if (error.code === '23P01') {
+            return sendError(res, 'Ce créneau vient d’être réservé par un autre client', 409, null, 'CRENEAU_CONFLICT');
+        }
+        if (error.code === '23514') {
+            return sendError(res, 'Ce créneau est indisponible', 409, null, 'CRENEAU_INDISPONIBLE');
+        }
         internalErrorResponse(res, error);
     }
 });
@@ -84,7 +86,7 @@ router.post('/', authenticate, async (req, res) => {
  * Liste les rendez-vous de l'utilisateur connecté (client ou coiffeur).
  * Query : statuts (optionnel, ex: "demande,confirme")
  */
-router.get('/', authenticate, async (req, res) => {
+router.get('/', authenticate, validate(listRendezVousQuerySchema, 'query'), async (req, res) => {
     try {
         const rawStatuts = req.query.statuts;
         const statuts = rawStatuts
@@ -112,10 +114,9 @@ router.get('/', authenticate, async (req, res) => {
  * GET /rendez-vous/:id
  * Détail d'un rendez-vous (accessible au client, au coiffeur et admin).
  */
-router.get('/:id', authenticate, async (req, res) => {
+router.get('/:id', authenticate, validate(rendezVousIdParamsSchema, 'params'), async (req, res) => {
     try {
-        const id = parseInt(req.params.id);
-        if (isNaN(id)) return sendError(res, 'id invalide', 400, null, 'INVALID_ID');
+        const { id } = req.params;
 
         const rdv = await getRendezVousDetailById(id);
         if (!rdv) return notFoundResponse(res, 'Rendez-vous');
@@ -134,33 +135,39 @@ router.get('/:id', authenticate, async (req, res) => {
  * Change le statut d'un rendez-vous.
  * Body : { statut } ∈ {demande, confirme, annule, termine, non_present}
  */
-router.patch('/:id/statut', authenticate, async (req, res) => {
+router.patch('/:id/statut', authenticate, validate(rendezVousIdParamsSchema, 'params'), validate(updateRendezVousStatutSchema), async (req, res) => {
     try {
-        const id = parseInt(req.params.id);
-        if (isNaN(id)) return sendError(res, 'id invalide', 400, null, 'INVALID_ID');
-
-        const statut = String(req.body.statut || '').trim();
-        if (!STATUTS_VALIDES.includes(statut)) {
-            return sendError(res, 'Statut invalide', 400, null, 'INVALID_STATUT');
-        }
-
+        const { id } = req.params;
+        const { statut } = req.body;
         const rdv = await getRendezVousDetailById(id);
         if (!rdv) return notFoundResponse(res, 'Rendez-vous');
 
-        const isCoiffeur = rdv.coiffeur_id === req.userId || req.userRole === 'admin';
-        const isClient   = rdv.client_id === req.userId;
+        const isAdmin = req.userRole === 'admin';
+        const isCoiffeur = rdv.coiffeur_id === req.userId;
+        const isClient = rdv.client_id === req.userId;
+        const transitionsCoiffeur = {
+            demande: ['confirme', 'annule'],
+            confirme: ['termine', 'non_present', 'annule']
+        };
+        const transitionsClient = {
+            demande: ['annule'],
+            confirme: ['annule']
+        };
+        const transitions = isAdmin || isCoiffeur ? transitionsCoiffeur : isClient ? transitionsClient : null;
 
-        if (!isCoiffeur && !isClient) {
+        if (!transitions) {
             return sendError(res, 'Accès interdit', 403, null, 'FORBIDDEN');
         }
-
-        // Le client peut annuler son RDV, le coiffeur peut tout changer.
-        if (!isCoiffeur && statut !== 'annule') {
-            return sendError(res, 'Action non autorisée', 403, null, 'FORBIDDEN');
+        if (!transitions[rdv.statut]?.includes(statut)) {
+            return sendError(res, `Transition impossible : ${rdv.statut} vers ${statut}`, 409, null, 'INVALID_STATUS_TRANSITION');
         }
 
-        const updated = await updateRendezVousStatut(id, statut);
-        sendSuccess(res, 'Statut mis à jour', { rendez_vous: formatRendezVous(updated) });
+        const updated = await updateRendezVousStatut(id, rdv.statut, statut);
+        if (!updated) {
+            return sendError(res, 'Le rendez-vous a été modifié entre-temps', 409, null, 'RENDEZ_VOUS_CONFLICT');
+        }
+        const detail = await getRendezVousDetailById(id);
+        sendSuccess(res, 'Statut mis à jour', { rendez_vous: formatRendezVous(detail) });
     } catch (error) {
         internalErrorResponse(res, error);
     }
@@ -170,19 +177,20 @@ router.patch('/:id/statut', authenticate, async (req, res) => {
  * DELETE /rendez-vous/:id
  * Supprime un rendez-vous (client ou coiffeur).
  */
-router.delete('/:id', authenticate, async (req, res) => {
+router.delete('/:id', authenticate, validate(rendezVousIdParamsSchema, 'params'), async (req, res) => {
     try {
-        const id = parseInt(req.params.id);
-        if (isNaN(id)) return sendError(res, 'id invalide', 400, null, 'INVALID_ID');
-
+        const { id } = req.params;
         const rdv = await getRendezVousDetailById(id);
         if (!rdv) return notFoundResponse(res, 'Rendez-vous');
-        if (rdv.client_id !== req.userId && rdv.coiffeur_id !== req.userId && req.userRole !== 'admin') {
-            return sendError(res, 'Accès interdit', 403, null, 'FORBIDDEN');
+        const isParticipant = rdv.client_id === req.userId || rdv.coiffeur_id === req.userId || req.userRole === 'admin';
+        if (!isParticipant) return sendError(res, 'Accès interdit', 403, null, 'FORBIDDEN');
+        if (!['demande', 'confirme'].includes(rdv.statut)) {
+            return sendError(res, 'Seuls les rendez-vous en attente ou confirmés peuvent être annulés', 409, null, 'INVALID_STATUS_TRANSITION');
         }
 
-        await deleteRendezVous(id);
-        sendSuccess(res, 'Rendez-vous supprimé');
+        const updated = await updateRendezVousStatut(id, rdv.statut, 'annule');
+        if (!updated) return sendError(res, 'Le rendez-vous a été modifié entre-temps', 409, null, 'RENDEZ_VOUS_CONFLICT');
+        sendSuccess(res, 'Rendez-vous annulé');
     } catch (error) {
         internalErrorResponse(res, error);
     }

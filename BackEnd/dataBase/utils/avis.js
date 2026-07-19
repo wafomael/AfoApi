@@ -4,22 +4,22 @@ const TABLE = 's_afro_dev.avis';
 const USER  = 's_afro_dev.utilisateur';
 
 /**
- * Crée ou met à jour l'avis d'un client sur un coiffeur (un seul par paire).
+ * Crée ou met à jour l'avis d'un client pour un rendez-vous terminé.
  * Le trigger SQL recalcule note_moyenne/nb_avis du coiffeur.
- * @param {object} data - { clientId, coiffeurId, note, commentaire }
+ * @param {object} data - { rendezVousId, clientId, coiffeurId, note, commentaire }
  * @returns {Promise<object>}
  */
-export const upsertAvis = async ({ clientId, coiffeurId, note, commentaire = null }) => {
+export const upsertAvis = async ({ rendezVousId, clientId, coiffeurId, note, commentaire = null }) => {
     const sql = `
-        INSERT INTO ${TABLE} (client_id, coiffeur_id, note, commentaire)
-        VALUES ($1, $2, $3, $4)
-        ON CONFLICT (client_id, coiffeur_id)
+        INSERT INTO ${TABLE} (rendez_vous_id, client_id, coiffeur_id, note, commentaire)
+        VALUES ($1, $2, $3, $4, $5)
+        ON CONFLICT (rendez_vous_id)
         DO UPDATE SET note = EXCLUDED.note,
                       commentaire = EXCLUDED.commentaire,
-                      created_at = NOW()
-        RETURNING id, client_id, coiffeur_id, note, commentaire, created_at
+                      updated_at = NOW()
+        RETURNING id, rendez_vous_id, client_id, coiffeur_id, note, commentaire, created_at, updated_at
     `;
-    const result = await query(sql, [clientId, coiffeurId, note, commentaire]);
+    const result = await query(sql, [rendezVousId, clientId, coiffeurId, note, commentaire]);
     return result.rows[0];
 };
 
@@ -31,7 +31,7 @@ export const upsertAvis = async ({ clientId, coiffeurId, note, commentaire = nul
  */
 export const listAvis = async (coiffeurId, { limit = 20, offset = 0 } = {}) => {
     const sql = `
-        SELECT a.id, a.note, a.commentaire, a.created_at,
+        SELECT a.id, a.rendez_vous_id, a.note, a.commentaire, a.created_at, a.updated_at,
                u.id AS client_id, u.nom_utilisateur AS client_username,
                u.prenom AS client_prenom, u.nom AS client_nom
         FROM ${TABLE} a
@@ -52,9 +52,11 @@ export const listAvis = async (coiffeurId, { limit = 20, offset = 0 } = {}) => {
  */
 export const getAvisByClient = async (clientId, coiffeurId) => {
     const sql = `
-        SELECT id, client_id, coiffeur_id, note, commentaire, created_at
+        SELECT id, rendez_vous_id, client_id, coiffeur_id, note, commentaire, created_at, updated_at
         FROM ${TABLE}
         WHERE client_id = $1 AND coiffeur_id = $2
+        ORDER BY created_at DESC
+        LIMIT 1
     `;
     const result = await query(sql, [clientId, coiffeurId]);
     return result.rows[0] || null;
@@ -64,12 +66,13 @@ export const getAvisByClient = async (clientId, coiffeurId) => {
  * Supprime l'avis d'un client (seul l'auteur peut supprimer le sien).
  * @param {number} clientId
  * @param {number} coiffeurId
+ * @param {number} rendezVousId
  * @returns {Promise<boolean>}
  */
-export const deleteAvis = async (clientId, coiffeurId) => {
+export const deleteAvis = async (clientId, coiffeurId, rendezVousId) => {
     const result = await query(
-        `DELETE FROM ${TABLE} WHERE client_id = $1 AND coiffeur_id = $2`,
-        [clientId, coiffeurId]
+        `DELETE FROM ${TABLE} WHERE client_id = $1 AND coiffeur_id = $2 AND rendez_vous_id = $3`,
+        [clientId, coiffeurId, rendezVousId]
     );
     return result.rowCount > 0;
 };

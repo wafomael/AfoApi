@@ -1,6 +1,5 @@
 import './config/env.js';
 import express from 'express';
-import http from 'http';
 import cors from 'cors';
 import authRoutes from './routes/auth.routes.refresh.js';
 import adminUserRoutes from './routes/admin/users.routes.js';
@@ -8,9 +7,6 @@ import userRoutes from './routes/users.routes.js';
 import coiffeurRoutes from './routes/coiffeurs.routes.js';
 import publicationRoutes from './routes/publications.routes.js';
 import rendezVousRoutes from './routes/rendezVous.routes.js';
-import conversationRoutes from './routes/conversations.routes.js';
-import { initSocket } from './socket/index.js';
-import { setAllUsersOffline } from './dataBase/utils/user.js';
 import { httpLogger } from './middleware/logger.js';
 import { ensureUploadDirs } from './config/upload.js';
 
@@ -36,7 +32,6 @@ app.use('/users', userRoutes);
 app.use('/coiffeurs', coiffeurRoutes);
 app.use('/publications', publicationRoutes);
 app.use('/rendez-vous', rendezVousRoutes);
-app.use('/conversations', conversationRoutes);
 
 // Route de test
 app.get('/', (req, res) => {
@@ -49,8 +44,7 @@ app.get('/', (req, res) => {
             users: '/users',
             coiffeurs: '/coiffeurs',
             publications: '/publications',
-            rendezVous: '/rendez-vous',
-            conversations: '/conversations'
+            rendezVous: '/rendez-vous'
         }
     });
 });
@@ -74,26 +68,7 @@ app.use((err, req, res, next) => {
     });
 });
 
-// Serveur HTTP explicite : Express (REST) + Socket.IO partagent le même port
-const server = http.createServer(app);
-
-// Brancher Socket.IO sur le même serveur HTTP
-const io = initSocket(server);
-// Rendre l'instance io accessible aux routes REST (ex: broadcast d'un média)
-app.set('io', io);
-
-server.listen(PORT, async () => {
+app.listen(PORT, () => {
     console.log(`Serveur démarré sur http://localhost:${PORT}`);
-    console.log(`Socket.IO actif sur le même port (${PORT})`);
-
-    // Créer les dossiers d'upload s'ils n'existent pas
     ensureUploadDirs();
-
-    // Repartir d'un état propre : aucun user online au démarrage
-    try {
-        await setAllUsersOffline();
-        console.log('[presence] statuts réinitialisés (tous offline)');
-    } catch (error) {
-        console.error('[presence] échec du reset au démarrage:', error.message);
-    }
 });
