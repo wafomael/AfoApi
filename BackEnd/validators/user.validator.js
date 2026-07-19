@@ -93,6 +93,13 @@ export const inscriptionSchema = Joi.object({
         .messages({
             'number.min': 'La longitude doit être entre -180 et 180',
             'number.max': 'La longitude doit être entre -180 et 180'
+        }),
+
+    role: Joi.string()
+        .valid('client', 'coiffeur')
+        .default('client')
+        .messages({
+            'any.only': 'Le rôle doit être client ou coiffeur'
         })
 });
 

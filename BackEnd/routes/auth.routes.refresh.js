@@ -37,7 +37,7 @@ router.post('/inscription', validate(inscriptionSchema), async (req, res) => {
     try {
         const {
             nom_utilisateur, email, mot_de_passe, prenom, nom,
-            date_naissance, sexe, ville, telephone, latitude, longitude
+            date_naissance, sexe, ville, telephone, latitude, longitude, role
         } = req.body;
 
         // Vérifier unicités
@@ -53,7 +53,7 @@ router.post('/inscription', validate(inscriptionSchema), async (req, res) => {
         const newUser = await userDB.createUser({
             nom_utilisateur, email, mot_de_passe: hashedPassword, prenom, nom,
             date_naissance, sexe, ville, telephone, latitude, longitude,
-            role: 'client', is_pro: false
+            role, is_pro: false
         });
 
         // Générer refresh token

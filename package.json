@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node BackEnd/index.js",
     "dev": "nodemon BackEnd/index.js",
-    "test": "node --test BackEnd/tests/rendezVous.validator.test.js"
+    "test": "node --test BackEnd/tests/rendezVous.validator.test.js BackEnd/tests/inscription.validator.test.js"
   },
   "type": "module",
   "private": true,
