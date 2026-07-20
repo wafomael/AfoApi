@@ -29,8 +29,10 @@ export const validate = (schema, source = 'body') => {
             return validationErrorResponse(res, errors);
         }
 
-        // Remplacer les données par les valeurs validées/converties
-        req[source] = value;
+        req.validated = { ...req.validated, [source]: value };
+        if (source !== 'query') {
+            req[source] = value;
+        }
         next();
     };
 };

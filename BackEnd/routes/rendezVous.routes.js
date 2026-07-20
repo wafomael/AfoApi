@@ -88,7 +88,7 @@ router.post('/', authenticate, validate(createRendezVousSchema), async (req, res
  */
 router.get('/', authenticate, validate(listRendezVousQuerySchema, 'query'), async (req, res) => {
     try {
-        const rawStatuts = req.query.statuts;
+        const rawStatuts = req.validated.query.statuts;
         const statuts = rawStatuts
             ? String(rawStatuts).split(',').map(s => s.trim()).filter(s => STATUTS_VALIDES.includes(s))
             : [];
@@ -98,8 +98,8 @@ router.get('/', authenticate, validate(listRendezVousQuerySchema, 'query'), asyn
             clientId: isCoiffeur ? null : req.userId,
             coiffeurId: isCoiffeur ? req.userId : null,
             statuts,
-            limit: Math.min(parseInt(req.query.limit) || 50, 100),
-            offset: parseInt(req.query.offset) || 0,
+            limit: req.validated.query.limit,
+            offset: req.validated.query.offset,
         });
 
         sendSuccess(res, `${rdvs.length} rendez-vous`, {

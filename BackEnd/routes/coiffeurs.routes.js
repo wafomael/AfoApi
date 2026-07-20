@@ -427,7 +427,7 @@ router.delete('/:username/avis', authenticate, validate(rendezVousIdQuerySchema,
         const target = await getUserByUsername(req.params.username);
         if (!target) return notFoundResponse(res, 'Utilisateur');
 
-        const ok = await deleteAvis(req.userId, target.id, req.query.rendez_vous_id);
+        const ok = await deleteAvis(req.userId, target.id, req.validated.query.rendez_vous_id);
         if (!ok) return notFoundResponse(res, 'Avis');
         sendSuccess(res, 'Avis supprimé');
     } catch (error) {
@@ -459,7 +459,7 @@ router.get('/:username/creneaux', authenticate, validate(creneauxQuerySchema, 'q
         const target = await getUserByUsername(req.params.username);
         if (!target) return notFoundResponse(res, 'Utilisateur');
 
-        const { date, prestation_id: prestationId } = req.query;
+        const { date, prestation_id: prestationId } = req.validated.query;
         const prestation = await getPrestationById(prestationId);
         if (!prestation || !prestation.actif || prestation.coiffeur_id !== target.id) {
             return sendError(res, 'Prestation invalide ou indisponible', 400, null, 'INVALID_PRESTATION');

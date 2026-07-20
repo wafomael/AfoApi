@@ -29,7 +29,7 @@ router.use(requireAuthAdmin);
  */
 router.get('/', validate(listUsersQuerySchema, 'query'), async (req, res) => {
     try {
-        const { role, search, is_pro, ville, statut, page, limit } = req.query;
+        const { role, search, is_pro, ville, statut, page, limit } = req.validated.query;
 
         const pagination = {
             limit: limit,
