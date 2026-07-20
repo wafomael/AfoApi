@@ -15,7 +15,7 @@ import { upsertAvis, listAvis, getAvisByClient, deleteAvis } from '../dataBase/u
 import { getRendezVousTerminePourAvis } from '../dataBase/utils/rendezVous.js';
 import {
     avisSchema, creneauxQuerySchema, disponibiliteSchema,
-    exceptionDisponibiliteSchema, rendezVousIdQuerySchema
+    exceptionDisponibiliteSchema, rendezVousIdQuerySchema, rendezVousIdParamsSchema
 } from '../validators/rendezVous.validator.js';
 import {
     createDisponibilite, listDisponibilites, deleteDisponibilite,
