@@ -36,6 +36,7 @@ router.get('/', authenticate, async (req, res) => {
     try {
         const search = (req.query.search || '').trim();
         const role = req.query.role ? String(req.query.role).trim() : null;
+        const ville = req.query.ville ? String(req.query.ville).trim() : null;
         const isPro = req.query.is_pro === 'true' ? true : undefined;
 
         if (search.length < 1 && !role) {
@@ -45,6 +46,7 @@ router.get('/', authenticate, async (req, res) => {
         const limit = Math.min(parseInt(req.query.limit) || 10, 30);
         const filters = { search };
         if (role) filters.role = role;
+        if (ville) filters.ville = ville;
         if (isPro !== undefined) filters.is_pro = isPro;
 
         const { users } = await listUsers(filters, { limit, offset: 0 });
