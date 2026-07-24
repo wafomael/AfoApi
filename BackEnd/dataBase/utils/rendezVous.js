@@ -1,4 +1,4 @@
-import { query } from '../dbConnect.js';
+import { pool, query } from '../dbConnect.js';
 
 const RDV = 's_afro_dev.rendez_vous';
 const PRESTATION = 's_afro_dev.prestation';
@@ -8,14 +8,53 @@ const USER = 's_afro_dev.utilisateur';
  * Crée un rendez-vous.
  * @param {{ clientId: number, coiffeurId: number, prestationId?: number|null, dateDebut: Date, dateFin: Date, prix?: number|null, unitePrix?: string, noteClient?: string|null }}
  */
-export const createRendezVous = async ({ clientId, coiffeurId, prestationId = null, dateDebut, dateFin, prix = null, unitePrix = 'forfait', noteClient = null }) => {
-    const sql = `
-        INSERT INTO ${RDV} (client_id, coiffeur_id, prestation_id, date_debut, date_fin, prix, unite_prix, note_client)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-        RETURNING id, client_id, coiffeur_id, prestation_id, date_debut, date_fin, statut, prix, unite_prix, note_client, created_at, updated_at
-    `;
-    const result = await query(sql, [clientId, coiffeurId, prestationId, dateDebut, dateFin, prix, unitePrix, noteClient]);
-    return result.rows[0];
+export const createRendezVous = async ({
+    clientId, coiffeurId, prestationId, dateDebut, dateFin, dateFinBlocage,
+    prix = null, unitePrix = 'forfait', noteClient = null, champsProfilPartages = [],
+    modePrestation, tempsReposMinutes, tempsTrajetMinutes,
+    acomptePaye, montantAcompte, statutAcompte, politiqueAcceptee, politiqueSnapshot
+}) => {
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        const result = await client.query(`
+            INSERT INTO ${RDV} (
+                client_id, coiffeur_id, prestation_id, date_debut, date_fin, date_fin_blocage,
+                prix, unite_prix, note_client, champs_profil_partages, mode_prestation,
+                temps_repos_minutes, temps_trajet_minutes, acompte_paye, montant_acompte,
+                statut_acompte, politique_acceptee_at
+            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+            RETURNING *
+        `, [
+            clientId, coiffeurId, prestationId, dateDebut, dateFin, dateFinBlocage,
+            prix, unitePrix, noteClient, champsProfilPartages, modePrestation,
+            tempsReposMinutes, tempsTrajetMinutes, acomptePaye, montantAcompte,
+            statutAcompte, politiqueAcceptee ? new Date() : null
+        ]);
+        const rdv = result.rows[0];
+        for (const champ of champsProfilPartages) {
+            await client.query(
+                `INSERT INTO s_afro_dev.consentement_profil (rendez_vous_id, champ_profil) VALUES ($1, $2)`,
+                [rdv.id, champ]
+            );
+        }
+        await client.query(`
+            INSERT INTO s_afro_dev.historique_rendez_vous
+                (rendez_vous_id, action, auteur_id, auteur_role, nouvelle_date, details)
+            VALUES ($1, 'creation', $2, 'client', $3, $4)
+        `, [rdv.id, clientId, dateDebut, JSON.stringify({
+            mode_prestation: modePrestation,
+            montant_acompte: montantAcompte,
+            politique_acceptee: politiqueSnapshot
+        })]);
+        await client.query('COMMIT');
+        return rdv;
+    } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+    } finally {
+        client.release();
+    }
 };
 
 /** Récupère un RDV par id. */
@@ -97,13 +136,127 @@ export const listRendezVous = async ({ clientId, coiffeurId, statuts = [], limit
 };
 
 /** Met à jour le statut d'un rendez-vous seulement depuis le statut attendu. */
-export const updateRendezVousStatut = async (id, statutActuel, nouveauStatut) => {
-    const result = await query(
-        `UPDATE ${RDV} SET statut = $3 WHERE id = $1 AND statut = $2
-         RETURNING id, client_id, coiffeur_id, prestation_id, date_debut, date_fin, statut, prix, unite_prix, note_client`,
-        [id, statutActuel, nouveauStatut]
-    );
-    return result.rows[0] || null;
+export const updateRendezVousStatut = async (id, statutActuel, nouveauStatut, { auteurId, auteurRole, motif = null, statutAcompte = null, details = {} } = {}) => {
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        const result = await client.query(
+            `UPDATE ${RDV}
+             SET statut = $3, statut_acompte = COALESCE($4, statut_acompte)
+             WHERE id = $1 AND statut = $2 RETURNING *`,
+            [id, statutActuel, nouveauStatut, statutAcompte]
+        );
+        const rdv = result.rows[0];
+        if (!rdv) {
+            await client.query('ROLLBACK');
+            return null;
+        }
+        await client.query(`
+            INSERT INTO s_afro_dev.historique_rendez_vous
+                (rendez_vous_id, action, auteur_id, auteur_role, motif, details)
+            VALUES ($1, $2, $3, $4, $5, $6)
+        `, [id, nouveauStatut, auteurId, auteurRole, motif, JSON.stringify({
+            ancien_statut: statutActuel,
+            nouveau_statut: nouveauStatut,
+            statut_acompte: rdv.statut_acompte,
+            ...details
+        })]);
+        await client.query('COMMIT');
+        return rdv;
+    } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+    } finally {
+        client.release();
+    }
+};
+
+export const listHistoriqueRendezVous = async (id) => {
+    const result = await query(`
+        SELECT h.*, u.nom_utilisateur AS auteur_username
+        FROM s_afro_dev.historique_rendez_vous h
+        LEFT JOIN ${USER} u ON u.id = h.auteur_id
+        WHERE h.rendez_vous_id = $1 ORDER BY h.date_action DESC
+    `, [id]);
+    return result.rows;
+};
+
+export const reportRendezVous = async (rdv, dateDebut, dateFin, dateFinBlocage, auteurId, motif) => {
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        const result = await client.query(`
+            UPDATE ${RDV}
+            SET date_debut = $2, date_fin = $3, date_fin_blocage = $4, nb_reports = nb_reports + 1,
+                retard_minutes = 0, decalage_minutes = 0
+            WHERE id = $1 AND statut IN ('demande', 'confirme') RETURNING *
+        `, [rdv.id, dateDebut, dateFin, dateFinBlocage]);
+        if (!result.rows[0]) {
+            await client.query('ROLLBACK');
+            return null;
+        }
+        await client.query(`
+            INSERT INTO s_afro_dev.historique_rendez_vous
+                (rendez_vous_id, action, auteur_id, auteur_role, motif, ancienne_date, nouvelle_date)
+            VALUES ($1, 'report', $2, 'client', $3, $4, $5)
+        `, [rdv.id, auteurId, motif, rdv.date_debut, dateDebut]);
+        await client.query('COMMIT');
+        return result.rows[0];
+    } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+    } finally {
+        client.release();
+    }
+};
+
+export const signalerRetardEtDecaler = async (rdv, retardMinutes, auteurId, motif) => {
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        await client.query('SET CONSTRAINTS s_afro_dev.excl_rendez_vous_coiffeur_creneau DEFERRED');
+        const affected = await client.query(`
+            SELECT id, client_id, date_debut
+            FROM ${RDV}
+            WHERE coiffeur_id = $1
+              AND date_debut::date = $2::timestamp::date
+              AND date_debut >= $2
+              AND statut IN ('demande', 'confirme', 'en_cours')
+            ORDER BY date_debut FOR UPDATE
+        `, [rdv.coiffeur_id, rdv.date_debut]);
+        const ids = affected.rows.map((row) => row.id);
+        await client.query(`
+            UPDATE ${RDV}
+            SET date_debut = date_debut + ($2 * INTERVAL '1 minute'),
+                date_fin = date_fin + ($2 * INTERVAL '1 minute'),
+                date_fin_blocage = date_fin_blocage + ($2 * INTERVAL '1 minute'),
+                decalage_minutes = decalage_minutes + $2,
+                retard_minutes = CASE WHEN id = $1 THEN retard_minutes + $2 ELSE retard_minutes END
+            WHERE id = ANY($3::int[])
+        `, [rdv.id, retardMinutes, ids]);
+        for (const affectedRdv of affected.rows) {
+            await client.query(`
+                INSERT INTO s_afro_dev.historique_rendez_vous
+                    (rendez_vous_id, action, auteur_id, auteur_role, motif, ancienne_date, nouvelle_date, details)
+                VALUES ($1, $2, $3, 'client', $4, $5, $6, $7)
+            `, [
+                affectedRdv.id,
+                affectedRdv.id === rdv.id ? 'retard_signale' : 'decale_retard_precedent',
+                auteurId,
+                motif,
+                affectedRdv.date_debut,
+                new Date(new Date(affectedRdv.date_debut).getTime() + retardMinutes * 60000),
+                JSON.stringify({ retard_minutes: retardMinutes, rendez_vous_source_id: rdv.id })
+            ]);
+        }
+        await client.query('COMMIT');
+        return ids;
+    } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+    } finally {
+        client.release();
+    }
 };
 
 /** Supprime/annule un rendez-vous (soft delete via statut annule, ou hard delete). */

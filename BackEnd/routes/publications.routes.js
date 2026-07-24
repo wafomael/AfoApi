@@ -11,8 +11,20 @@ import {
     savePublicationMedias, deletePublicationMedias, getPublicationMediaPath,
     publicationMediaExists, buildPublicationMediaUrls
 } from '../utils/publicationMedia.js';
+import { replacePublicationTags, validateTaxonomySelection } from '../dataBase/utils/taxonomy.js';
 
 const router = Router();
+
+const parseOptionalId = (value) => {
+    if (value === undefined || value === null || value === '') return null;
+    const id = parseInt(value);
+    return Number.isInteger(id) && id > 0 ? id : null;
+};
+const parseTagIds = (value) => {
+    if (value === undefined || value === null || value === '') return [];
+    const raw = Array.isArray(value) ? value : String(value).split(',');
+    return [...new Set(raw.map(Number).filter(Number.isInteger).filter((id) => id > 0))];
+};
 
 /** Gère les erreurs multer communes. */
 const handleUploadError = (err, res) => {
@@ -30,6 +42,11 @@ const formatPublication = (req, p) => ({
     id:          p.id,
     user_id:     p.user_id,
     legende:     p.legende,
+    categorie_id: p.categorie_id,
+    categorie:   p.categorie_detail,
+    sous_type_id: p.sous_type_id,
+    sous_type:   p.sous_type,
+    tags:        p.tags ?? [],
     media_count: p.media_count,
     media_urls:  buildPublicationMediaUrls(req, p.id, p.media_count),
     created_at:  p.created_at,
@@ -61,13 +78,23 @@ router.post('/', authenticate, (req, res) => {
                 return sendError(res, 'La légende ne peut pas dépasser 500 caractères', 400, null, 'LEGENDE_TOO_LONG');
             }
 
-            const publication = await createPublication({ userId: req.userId, legende });
+            const categorieId = parseOptionalId(req.body.categorie_id);
+            const sousTypeId = parseOptionalId(req.body.sous_type_id);
+            const tagIds = parseTagIds(req.body.tag_ids);
+            if (!await validateTaxonomySelection({ categorieId, sousTypeId, tagIds })) {
+                return sendError(res, 'Catégorie, sous-type ou tags invalides', 400, null, 'INVALID_TAXONOMY');
+            }
+            const publication = await createPublication({
+                userId: req.userId, legende, categorieId, sousTypeId
+            });
+            await replacePublicationTags(publication.id, tagIds);
 
             let finale = publication;
             if (req.files && req.files.length > 0) {
                 const count = await savePublicationMedias(req.files.map((f) => f.buffer), publication.id);
                 finale = await setPublicationMediaCount(publication.id, count);
             }
+            finale = await getPublicationById(publication.id, req.userId) ?? finale;
 
             sendSuccess(res, 'Publication créée', { publication: formatPublication(req, finale) }, 201);
         } catch (error) {
@@ -211,8 +238,13 @@ router.get('/', authenticate, async (req, res) => {
 
         const limit  = Math.min(parseInt(req.query.limit) || 20, 50);
         const offset = parseInt(req.query.offset) || 0;
+        const categorieId = parseOptionalId(req.query.categorie_id);
+        const sousTypeId = parseOptionalId(req.query.sous_type_id);
+        const tagIds = parseTagIds(req.query.tag_ids);
 
-        const publications = await listPublications(target.id, { viewerId: req.userId, limit, offset });
+        const publications = await listPublications(target.id, {
+            viewerId: req.userId, limit, offset, categorieId, sousTypeId, tagIds
+        });
 
         sendSuccess(res, `${publications.length} publication(s)`, {
             publications: publications.map((p) => formatPublication(req, p))

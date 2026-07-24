@@ -29,8 +29,24 @@ import {
     savePrestationMedias, deletePrestationMedias, getPrestationMediaPath,
     prestationMediaExists, buildPrestationMediaUrls
 } from '../utils/prestationMedia.js';
+import { replacePrestationTags, validateTaxonomySelection } from '../dataBase/utils/taxonomy.js';
+import { replacePrestationHairProfileFields } from '../dataBase/utils/hairProfile.js';
+import { areHairProfileFieldsValid, parseHairProfileFields } from '../utils/hairProfileFields.js';
+import { getBookingPolicy, upsertBookingPolicy } from '../dataBase/utils/bookingPolicy.js';
+import { bookingPolicySchema } from '../validators/bookingPolicy.validator.js';
 
 const router = Router();
+
+const parseOptionalId = (value) => {
+    if (value === undefined || value === null || value === '') return null;
+    const id = parseInt(value);
+    return Number.isInteger(id) && id > 0 ? id : null;
+};
+const parseTagIds = (value) => {
+    if (value === undefined || value === null || value === '') return [];
+    const raw = Array.isArray(value) ? value : String(value).split(',');
+    return [...new Set(raw.map(Number).filter(Number.isInteger).filter((id) => id > 0))];
+};
 
 /** Auth + rôle coiffeur minimum (pour les routes de gestion). */
 const coiffeurOnly = [authenticate, requirePermission(PERMISSION_LEVELS.COIFFEUR)];
@@ -51,7 +67,13 @@ const formatPrestation = (req, p) => ({
     id:              p.id,
     coiffeur_id:     p.coiffeur_id,
     nom:             p.nom,
-    categorie:       p.categorie,
+    categorie:       p.categorie_detail?.nom ?? p.categorie,
+    categorie_id:    p.categorie_id,
+    categorie_detail: p.categorie_detail,
+    sous_type_id:    p.sous_type_id,
+    sous_type:       p.sous_type,
+    tags:            p.tags ?? [],
+    champs_profil_demandes: p.champs_profil_demandes ?? [],
     prix:            p.prix === null ? null : Number(p.prix),
     unite_prix:      p.unite_prix,
     duree_min:       p.duree_min,
@@ -87,6 +109,22 @@ router.put('/me', coiffeurOnly, async (req, res) => {
                 if (isNaN(r) || r < 0) return sendError(res, 'rayon_km invalide', 400, null, 'INVALID_RAYON');
                 updates.rayon_km = r;
             }
+        }
+
+        for (const field of ['temps_repos_minutes', 'temps_trajet_minutes']) {
+            if (req.body[field] !== undefined) {
+                const value = Number(req.body[field]);
+                if (!Number.isInteger(value) || value < 0 || value > 240) {
+                    return sendError(res, `${field} invalide`, 400, null, 'INVALID_SCHEDULING_BUFFER');
+                }
+                updates[field] = value;
+            }
+        }
+        if (req.body.mode_prestation_defaut !== undefined) {
+            if (!['salon', 'domicile', 'les_deux'].includes(req.body.mode_prestation_defaut)) {
+                return sendError(res, 'Mode de prestation invalide', 400, null, 'INVALID_SERVICE_MODE');
+            }
+            updates.mode_prestation_defaut = req.body.mode_prestation_defaut;
         }
 
         const profil = await upsertProfilCoiffeur(req.userId, updates);
@@ -169,10 +207,23 @@ router.post('/me/prestations', coiffeurOnly, (req, res) => {
             const nom = (req.body.nom || '').trim();
             if (!nom) return sendError(res, 'Le nom de la prestation est requis', 400, null, 'NOM_REQUIRED');
 
+            const categorieId = parseOptionalId(req.body.categorie_id);
+            const sousTypeId = parseOptionalId(req.body.sous_type_id);
+            const tagIds = parseTagIds(req.body.tag_ids);
+            if (!areHairProfileFieldsValid(req.body.champs_profil_demandes)) {
+                return sendError(res, 'Champ du profil capillaire invalide', 400, null, 'INVALID_HAIR_PROFILE_FIELD');
+            }
+            const hairProfileFields = parseHairProfileFields(req.body.champs_profil_demandes);
+            if (!await validateTaxonomySelection({ categorieId, sousTypeId, tagIds })) {
+                return sendError(res, 'Catégorie, sous-type ou tags invalides', 400, null, 'INVALID_TAXONOMY');
+            }
+
             const prestation = await createPrestation({
                 coiffeurId:      req.userId,
                 nom,
                 categorie:       req.body.categorie ?? null,
+                categorie_id:    categorieId,
+                sous_type_id:    sousTypeId,
                 prix:            req.body.prix !== undefined ? parseFloat(req.body.prix) : null,
                 unite_prix:      req.body.unite_prix ?? 'forfait',
                 duree_min:       req.body.duree_min !== undefined ? parseInt(req.body.duree_min) : null,
@@ -180,7 +231,9 @@ router.post('/me/prestations', coiffeurOnly, (req, res) => {
                 description:     req.body.description ?? null
             });
 
-            let finale = prestation;
+            await replacePrestationTags(prestation.id, tagIds);
+            await replacePrestationHairProfileFields(prestation.id, hairProfileFields);
+            let finale = await getPrestationById(prestation.id);
             if (req.files && req.files.length > 0) {
                 const count = await savePrestationMedias(req.files.map((f) => f.buffer), prestation.id);
                 finale = await setPrestationMediaCount(prestation.id, count);
@@ -211,6 +264,8 @@ router.put('/me/prestations/:id', coiffeurOnly, async (req, res) => {
         const updates = {};
         if (req.body.nom !== undefined)             updates.nom = String(req.body.nom).trim();
         if (req.body.categorie !== undefined)        updates.categorie = req.body.categorie;
+        if (req.body.categorie_id !== undefined)     updates.categorie_id = parseOptionalId(req.body.categorie_id);
+        if (req.body.sous_type_id !== undefined)     updates.sous_type_id = parseOptionalId(req.body.sous_type_id);
         if (req.body.prix !== undefined)             updates.prix = req.body.prix === null ? null : parseFloat(req.body.prix);
         if (req.body.unite_prix !== undefined)       updates.unite_prix = req.body.unite_prix;
         if (req.body.duree_min !== undefined)        updates.duree_min = req.body.duree_min === null ? null : parseInt(req.body.duree_min);
@@ -218,8 +273,25 @@ router.put('/me/prestations/:id', coiffeurOnly, async (req, res) => {
         if (req.body.description !== undefined)       updates.description = req.body.description;
         if (req.body.actif !== undefined)            updates.actif = req.body.actif === true || req.body.actif === 'true';
 
+        const categorieId = updates.categorie_id !== undefined ? updates.categorie_id : existante.categorie_id;
+        const sousTypeId = updates.sous_type_id !== undefined ? updates.sous_type_id : existante.sous_type_id;
+        const tagIds = req.body.tag_ids !== undefined ? parseTagIds(req.body.tag_ids) : (existante.tags ?? []).map((tag) => tag.id);
+        if (!areHairProfileFieldsValid(req.body.champs_profil_demandes)) {
+            return sendError(res, 'Champ du profil capillaire invalide', 400, null, 'INVALID_HAIR_PROFILE_FIELD');
+        }
+        const hairProfileFields = req.body.champs_profil_demandes !== undefined
+            ? parseHairProfileFields(req.body.champs_profil_demandes)
+            : (existante.champs_profil_demandes ?? []);
+        if (!await validateTaxonomySelection({ categorieId, sousTypeId, tagIds })) {
+            return sendError(res, 'Catégorie, sous-type ou tags invalides', 400, null, 'INVALID_TAXONOMY');
+        }
         const prestation = await updatePrestation(id, updates);
-        sendSuccess(res, 'Prestation mise à jour', { prestation: formatPrestation(req, prestation) });
+        if (req.body.tag_ids !== undefined) await replacePrestationTags(id, tagIds);
+        if (req.body.champs_profil_demandes !== undefined) {
+            await replacePrestationHairProfileFields(id, hairProfileFields);
+        }
+        const finale = await getPrestationById(id);
+        sendSuccess(res, 'Prestation mise à jour', { prestation: formatPrestation(req, finale ?? prestation) });
     } catch (error) {
         internalErrorResponse(res, error);
     }
@@ -321,6 +393,9 @@ router.get('/:username', authenticate, async (req, res) => {
                 description:     profil.description,
                 adresse:         profil.adresse,
                 rayon_km:        profil.rayon_km,
+                temps_repos_minutes: profil.temps_repos_minutes,
+                temps_trajet_minutes: profil.temps_trajet_minutes,
+                mode_prestation_defaut: profil.mode_prestation_defaut,
                 note_moyenne:    Number(profil.note_moyenne),
                 nb_avis:         profil.nb_avis,
                 updated_at:      profil.updated_at
@@ -363,7 +438,10 @@ router.get('/:username/prestations', authenticate, async (req, res) => {
 
         // Le coiffeur voit aussi ses prestations inactives.
         const includeInactive = target.id === req.userId;
-        const prestations = await listPrestations(target.id, { includeInactive });
+        const categorieId = parseOptionalId(req.query.categorie_id);
+        const sousTypeId = parseOptionalId(req.query.sous_type_id);
+        const tagIds = parseTagIds(req.query.tag_ids);
+        const prestations = await listPrestations(target.id, { includeInactive, categorieId, sousTypeId, tagIds });
 
         sendSuccess(res, `${prestations.length} prestation(s)`, {
             prestations: prestations.map((p) => formatPrestation(req, p))
@@ -441,6 +519,26 @@ router.delete('/:username/avis', authenticate, validate(rendezVousIdQuerySchema,
  * ============================================
  */
 
+router.get('/:username/politique-reservation', async (req, res) => {
+    try {
+        const target = await getUserByUsername(req.params.username);
+        if (!target || target.role !== 'coiffeur') return notFoundResponse(res, 'Coiffeur');
+        const politique = await getBookingPolicy(target.id);
+        sendSuccess(res, 'Politique de réservation', { politique });
+    } catch (error) {
+        internalErrorResponse(res, error);
+    }
+});
+
+router.put('/me/politique-reservation', coiffeurOnly, validate(bookingPolicySchema), async (req, res) => {
+    try {
+        const politique = await upsertBookingPolicy(req.userId, req.body);
+        sendSuccess(res, 'Politique de réservation mise à jour', { politique });
+    } catch (error) {
+        internalErrorResponse(res, error);
+    }
+});
+
 /** GET /coiffeurs/:username/disponibilites — liste les disponibilités récurrentes. */
 router.get('/:username/disponibilites', async (req, res) => {
     try {
@@ -459,14 +557,25 @@ router.get('/:username/creneaux', authenticate, validate(creneauxQuerySchema, 'q
         const target = await getUserByUsername(req.params.username);
         if (!target) return notFoundResponse(res, 'Utilisateur');
 
-        const { date, prestation_id: prestationId } = req.validated.query;
+        const { date, prestation_id: prestationId, mode_prestation: modePrestation } = req.validated.query;
         const prestation = await getPrestationById(prestationId);
         if (!prestation || !prestation.actif || prestation.coiffeur_id !== target.id) {
             return sendError(res, 'Prestation invalide ou indisponible', 400, null, 'INVALID_PRESTATION');
         }
 
-        const creneaux = await getCreneauxLibres(target.id, date, prestation.duree_min || 30);
-        sendSuccess(res, `${creneaux.length} créneau(x) disponible(s)`, { creneaux });
+        const profil = await getProfilCoiffeur(target.id);
+        if (profil?.mode_prestation_defaut !== 'les_deux' && profil?.mode_prestation_defaut !== modePrestation) {
+            return sendError(res, 'Ce mode de prestation n’est pas proposé', 400, null, 'SERVICE_MODE_UNAVAILABLE');
+        }
+        const creneaux = await getCreneauxLibres(target.id, date, prestation.duree_min || 30, modePrestation);
+        const politique = await getBookingPolicy(target.id);
+        const minDate = Date.now() + politique.delai_min_heures * 3600000;
+        const maxDate = Date.now() + politique.delai_max_jours * 86400000;
+        const disponibles = creneaux.filter((creneau) => {
+            const debut = new Date(`${date}T${creneau.heure_debut}:00`).getTime();
+            return debut >= minDate && debut <= maxDate;
+        });
+        sendSuccess(res, `${disponibles.length} créneau(x) disponible(s)`, { creneaux: disponibles });
     } catch (error) {
         internalErrorResponse(res, error);
     }
@@ -482,6 +591,9 @@ router.post('/me/disponibilites', coiffeurOnly, validate(disponibiliteSchema), a
         });
         sendSuccess(res, 'Disponibilité créée', { disponibilite: dispo }, 201);
     } catch (error) {
+        if (error.code === '23505') {
+            return sendError(res, 'Cette plage horaire existe déjà', 409, null, 'AVAILABILITY_ALREADY_EXISTS');
+        }
         internalErrorResponse(res, error);
     }
 });
@@ -498,6 +610,19 @@ router.delete('/me/disponibilites/:id', coiffeurOnly, validate(rendezVousIdParam
     }
 });
 
+router.get('/me/exceptions', coiffeurOnly, async (req, res) => {
+    try {
+        const dateDebut = /^\d{4}-\d{2}-\d{2}$/.test(req.query.date_debut ?? '') ? req.query.date_debut : new Date().toISOString().slice(0, 10);
+        const dateFin = /^\d{4}-\d{2}-\d{2}$/.test(req.query.date_fin ?? '')
+            ? req.query.date_fin
+            : new Date(Date.now() + 365 * 86400000).toISOString().slice(0, 10);
+        const exceptions = await listExceptions(req.userId, { dateDebut, dateFin });
+        sendSuccess(res, `${exceptions.length} exception(s)`, { exceptions });
+    } catch (error) {
+        internalErrorResponse(res, error);
+    }
+});
+
 /** POST /coiffeurs/me/exceptions — crée une exception (jour ou créneau bloqué). */
 router.post('/me/exceptions', coiffeurOnly, validate(exceptionDisponibiliteSchema), async (req, res) => {
     try {
@@ -508,6 +633,9 @@ router.post('/me/exceptions', coiffeurOnly, validate(exceptionDisponibiliteSchem
         });
         sendSuccess(res, 'Exception créée', { exception: exc }, 201);
     } catch (error) {
+        if (error.code === '23505') {
+            return sendError(res, 'Cette fermeture existe déjà', 409, null, 'EXCEPTION_ALREADY_EXISTS');
+        }
         internalErrorResponse(res, error);
     }
 });

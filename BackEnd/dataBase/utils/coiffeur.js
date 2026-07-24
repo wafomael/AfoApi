@@ -10,6 +10,7 @@ const TABLE = 's_afro_dev.profil_coiffeur';
 export const getProfilCoiffeur = async (userId) => {
     const sql = `
         SELECT user_id, nom_salon, description, adresse, rayon_km,
+               temps_repos_minutes, temps_trajet_minutes, mode_prestation_defaut,
                note_moyenne, nb_avis, updated_at
         FROM ${TABLE}
         WHERE user_id = $1
@@ -19,7 +20,10 @@ export const getProfilCoiffeur = async (userId) => {
 };
 
 /** Champs modifiables du profil coiffeur (note_moyenne/nb_avis = trigger). */
-const CHAMPS_AUTORISES = ['nom_salon', 'description', 'adresse', 'rayon_km'];
+const CHAMPS_AUTORISES = [
+    'nom_salon', 'description', 'adresse', 'rayon_km',
+    'temps_repos_minutes', 'temps_trajet_minutes', 'mode_prestation_defaut'
+];
 
 /**
  * Met à jour (ou crée) le profil coiffeur d'un utilisateur.
@@ -54,6 +58,7 @@ export const upsertProfilCoiffeur = async (userId, updates) => {
         VALUES ($1, ${placeholders})
         ON CONFLICT (user_id) DO UPDATE SET ${setClauses.join(', ')}
         RETURNING user_id, nom_salon, description, adresse, rayon_km,
+                  temps_repos_minutes, temps_trajet_minutes, mode_prestation_defaut,
                   note_moyenne, nb_avis, updated_at
     `;
     const result = await query(sql, vals);

@@ -8,6 +8,16 @@ import { getProfilUtilisateur, upsertProfilUtilisateur } from '../dataBase/utils
 
 const router = Router();
 
+const parseOptionalId = (value) => {
+    const id = parseInt(value);
+    return Number.isInteger(id) && id > 0 ? id : null;
+};
+
+const parseTagIds = (value) => {
+    if (!value) return [];
+    return [...new Set(String(value).split(',').map(Number).filter(Number.isInteger).filter((id) => id > 0))];
+};
+
 /** Profil étendu par défaut (si la ligne n'existe pas encore). */
 const profilParDefaut = {
     bio: null, lien_externe: null, type_cheveux: [], coiffure_preferee: []
@@ -38,6 +48,9 @@ router.get('/', authenticate, async (req, res) => {
         const role = req.query.role ? String(req.query.role).trim() : null;
         const ville = req.query.ville ? String(req.query.ville).trim() : null;
         const isPro = req.query.is_pro === 'true' ? true : undefined;
+        const categorieId = parseOptionalId(req.query.categorie_id);
+        const sousTypeId = parseOptionalId(req.query.sous_type_id);
+        const tagIds = parseTagIds(req.query.tag_ids);
 
         if (search.length < 1 && !role) {
             return sendSuccess(res, 'Aucun terme de recherche', { users: [] });
@@ -48,6 +61,9 @@ router.get('/', authenticate, async (req, res) => {
         if (role) filters.role = role;
         if (ville) filters.ville = ville;
         if (isPro !== undefined) filters.is_pro = isPro;
+        if (categorieId) filters.categorie_id = categorieId;
+        if (sousTypeId) filters.sous_type_id = sousTypeId;
+        if (tagIds.length > 0) filters.tag_ids = tagIds;
 
         const { users } = await listUsers(filters, { limit, offset: 0 });
 

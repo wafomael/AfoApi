@@ -15,6 +15,7 @@ export const PROFIL_DIR  = join(UPLOAD_ROOT, 'profils');
 export const PUBLICATION_DIR = join(UPLOAD_ROOT, 'publications');
 /** Médias des prestations : presta_{prestation_id}_{index}.webp */
 export const PRESTATION_DIR  = join(UPLOAD_ROOT, 'prestations');
+export const HAIR_PROFILE_DIR = join(UPLOAD_ROOT, 'profils-capillaires');
 
 /** Extension/format unique de stockage. */
 export const PHOTO_EXT = 'webp';
@@ -30,4 +31,5 @@ export const ensureUploadDirs = () => {
     fs.mkdirSync(PROFIL_DIR, { recursive: true });
     fs.mkdirSync(PUBLICATION_DIR, { recursive: true });
     fs.mkdirSync(PRESTATION_DIR, { recursive: true });
+    fs.mkdirSync(HAIR_PROFILE_DIR, { recursive: true });
 };

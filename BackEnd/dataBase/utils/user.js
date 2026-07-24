@@ -88,16 +88,37 @@ export const listUsers = async (filters = {}, pagination = { limit: 20, offset: 
         i++;
     }
 
+    if (filters.categorie_id || filters.sous_type_id || filters.tag_ids?.length > 0) {
+        const prestationConditions = ['p.coiffeur_id = utilisateur.id', 'p.actif = TRUE'];
+        if (filters.categorie_id) {
+            prestationConditions.push(`p.categorie_id = $${i++}`);
+            params.push(filters.categorie_id);
+        }
+        if (filters.sous_type_id) {
+            prestationConditions.push(`p.sous_type_id = $${i++}`);
+            params.push(filters.sous_type_id);
+        }
+        if (filters.tag_ids?.length > 0) {
+            prestationConditions.push(`p.id IN (
+                SELECT pt.prestation_id FROM s_afro_dev.prestation_tag pt
+                WHERE pt.tag_id = ANY($${i++}::int[])
+                GROUP BY pt.prestation_id HAVING COUNT(DISTINCT pt.tag_id) = $${i++}
+            )`);
+            params.push(filters.tag_ids, filters.tag_ids.length);
+        }
+        conditions.push(`EXISTS (SELECT 1 FROM s_afro_dev.prestation p WHERE ${prestationConditions.join(' AND ')})`);
+    }
+
     const whereClause = conditions.join(' AND ');
 
     // Requête count
-    const countSql = `SELECT COUNT(*) FROM ${TABLE_NAME} WHERE ${whereClause}`;
+    const countSql = `SELECT COUNT(*) FROM ${TABLE_NAME} utilisateur WHERE ${whereClause}`;
     const countResult = await query(countSql, params);
     const total = parseInt(countResult.rows[0].count);
 
     // Requête données
     const selectFields = 'id, nom_utilisateur, email, prenom, nom, date_naissance, sexe, ville, latitude, longitude, telephone, role, is_pro, statut, created_at';
-    const sql = `SELECT ${selectFields} FROM ${TABLE_NAME} 
+    const sql = `SELECT ${selectFields} FROM ${TABLE_NAME} utilisateur
                  WHERE ${whereClause} 
                  ORDER BY is_pro DESC, created_at DESC 
                  LIMIT $${i++} OFFSET $${i++}`;

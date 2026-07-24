@@ -70,7 +70,7 @@ export const deleteException = async (id, coiffeurId) => {
     return result.rowCount > 0;
 };
 
-export const isCreneauDansDisponibilite = async (coiffeurId, dateDebut, dateFin) => {
+export const isCreneauDansDisponibilite = async (coiffeurId, dateDebut, dateFinBlocage) => {
     const sql = `
         SELECT EXISTS (
             SELECT 1
@@ -93,7 +93,7 @@ export const isCreneauDansDisponibilite = async (coiffeurId, dateDebut, dateFin)
               )
         ) AS disponible
     `;
-    const result = await query(sql, [coiffeurId, dateDebut, dateFin]);
+    const result = await query(sql, [coiffeurId, dateDebut, dateFinBlocage]);
     return result.rows[0].disponible;
 };
 
@@ -104,7 +104,7 @@ export const isCreneauDansDisponibilite = async (coiffeurId, dateDebut, dateFin)
  * @param {number} dureeMin - durée en minutes
  * @param {number} [excludeRdvId] - RDV à ignorer (utile pour modification)
  */
-export const getCreneauxLibres = async (coiffeurId, dateStr, dureeMin, excludeRdvId = null) => {
+export const getCreneauxLibres = async (coiffeurId, dateStr, dureeMin, modePrestation = 'salon', excludeRdvId = null) => {
     const date = new Date(dateStr + 'T00:00:00');
     const jourSemaine = date.getDay(); // 0 = dimanche
 
@@ -127,17 +127,25 @@ export const getCreneauxLibres = async (coiffeurId, dateStr, dureeMin, excludeRd
 
     // 3. Rendez-vous déjà pris ce jour (demande ou confirmé)
     const rdvs = await query(
-        `SELECT date_debut, date_fin FROM ${RDV}
+        `SELECT date_debut, date_fin_blocage FROM ${RDV}
          WHERE coiffeur_id = $1
-           AND statut IN ('demande', 'confirme')
+           AND statut IN ('demande', 'confirme', 'en_cours')
            AND DATE(date_debut) = $2
            ${excludeRdvId ? 'AND id <> $3' : ''}
          ORDER BY date_debut`,
         excludeRdvId ? [coiffeurId, dateStr, excludeRdvId] : [coiffeurId, dateStr]
     );
 
+    const configuration = await query(`
+        SELECT temps_repos_minutes, temps_trajet_minutes
+        FROM s_afro_dev.profil_coiffeur WHERE user_id = $1
+    `, [coiffeurId]);
+    const profil = configuration.rows[0] ?? {};
+    const tempsReposMinutes = profil.temps_repos_minutes ?? 0;
+    const tempsTrajetMinutes = modePrestation === 'domicile' ? (profil.temps_trajet_minutes ?? 0) : 0;
     const creneaux = [];
     const dureeMs = dureeMin * 60 * 1000;
+    const blocageMs = (dureeMin + tempsReposMinutes + tempsTrajetMinutes) * 60 * 1000;
 
     for (const d of dispos.rows) {
         let debut = new Date(`${dateStr}T${d.heure_debut}`);
@@ -151,7 +159,7 @@ export const getCreneauxLibres = async (coiffeurId, dateStr, dureeMin, excludeRd
             })),
             ...rdvs.rows.map(r => ({
                 debut: new Date(r.date_debut),
-                fin:   new Date(r.date_fin),
+                fin:   new Date(r.date_fin_blocage),
             })),
         ].sort((a, b) => a.debut - b.debut);
 
@@ -161,12 +169,14 @@ export const getCreneauxLibres = async (coiffeurId, dateStr, dureeMin, excludeRd
                 continue;
             }
             // Génère les créneaux possibles entre debut et occ.debut
-            while (debut.getTime() + dureeMs <= occ.debut.getTime()) {
+            while (debut.getTime() + blocageMs <= occ.debut.getTime()) {
                 const finCreneau = new Date(debut.getTime() + dureeMs);
-                if (finCreneau > finDispo) break;
+                const finBlocage = new Date(debut.getTime() + blocageMs);
+                if (finBlocage > finDispo) break;
                 creneaux.push({
                     heure_debut: formatTime(debut),
                     heure_fin:   formatTime(finCreneau),
+                    heure_fin_blocage: formatTime(finBlocage),
                 });
                 debut = finCreneau;
             }
@@ -174,11 +184,13 @@ export const getCreneauxLibres = async (coiffeurId, dateStr, dureeMin, excludeRd
         }
 
         // Créneaux jusqu'à la fin de la dispo
-        while (debut.getTime() + dureeMs <= finDispo.getTime()) {
+        while (debut.getTime() + blocageMs <= finDispo.getTime()) {
             const finCreneau = new Date(debut.getTime() + dureeMs);
+            const finBlocage = new Date(debut.getTime() + blocageMs);
             creneaux.push({
                 heure_debut: formatTime(debut),
                 heure_fin:   formatTime(finCreneau),
+                heure_fin_blocage: formatTime(finBlocage),
             });
             debut = finCreneau;
         }

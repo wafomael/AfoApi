@@ -1,4 +1,5 @@
 import Joi from 'joi';
+import { HAIR_PROFILE_FIELDS } from '../utils/hairProfileFields.js';
 
 const dateTime = Joi.date().iso().messages({
     'date.base': 'La date doit être valide',
@@ -18,7 +19,10 @@ export const createRendezVousSchema = Joi.object({
     prestation_id: Joi.number().integer().positive().required(),
     date_debut: dateTime.required(),
     date_fin: dateTime.greater(Joi.ref('date_debut')).required(),
-    note_client: Joi.string().trim().max(1000).allow(null, '').default(null)
+    note_client: Joi.string().trim().max(1000).allow(null, '').default(null),
+    champs_profil_partages: Joi.array().items(Joi.string().valid(...HAIR_PROFILE_FIELDS)).unique().default([]),
+    mode_prestation: Joi.string().valid('salon', 'domicile').required(),
+    politique_acceptee: Joi.boolean().valid(true).required()
 });
 
 export const listRendezVousQuerySchema = Joi.object({
@@ -28,12 +32,25 @@ export const listRendezVousQuerySchema = Joi.object({
 });
 
 export const updateRendezVousStatutSchema = Joi.object({
-    statut: Joi.string().valid('confirme', 'annule', 'termine', 'non_present').required()
+    statut: Joi.string().valid('confirme', 'en_cours', 'annule', 'refuse', 'termine', 'non_present').required(),
+    motif: Joi.string().trim().max(1000).allow(null, '').default(null)
 });
 
 export const creneauxQuerySchema = Joi.object({
     date: Joi.string().pattern(/^\d{4}-\d{2}-\d{2}$/).required(),
-    prestation_id: Joi.number().integer().positive().required()
+    prestation_id: Joi.number().integer().positive().required(),
+    mode_prestation: Joi.string().valid('salon', 'domicile').default('salon')
+});
+
+export const retardRendezVousSchema = Joi.object({
+    retard_minutes: Joi.number().integer().min(1).max(180).required(),
+    motif: Joi.string().trim().max(500).allow(null, '').default(null)
+});
+
+export const reportRendezVousSchema = Joi.object({
+    date_debut: dateTime.required(),
+    date_fin: dateTime.greater(Joi.ref('date_debut')).required(),
+    motif: Joi.string().trim().max(1000).allow(null, '').default(null)
 });
 
 export const disponibiliteSchema = Joi.object({

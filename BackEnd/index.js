@@ -7,6 +7,8 @@ import userRoutes from './routes/users.routes.js';
 import coiffeurRoutes from './routes/coiffeurs.routes.js';
 import publicationRoutes from './routes/publications.routes.js';
 import rendezVousRoutes from './routes/rendezVous.routes.js';
+import taxonomyRoutes from './routes/taxonomy.routes.js';
+import hairProfileRoutes from './routes/hairProfile.routes.js';
 import { httpLogger } from './middleware/logger.js';
 import { ensureUploadDirs } from './config/upload.js';
 
@@ -17,7 +19,7 @@ const PORT = process.env.PORT || 3000;
 app.use(cors({
     origin: ['*'],  // Autorise Flutter (pas de origin fixe)
     credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
@@ -32,6 +34,8 @@ app.use('/users', userRoutes);
 app.use('/coiffeurs', coiffeurRoutes);
 app.use('/publications', publicationRoutes);
 app.use('/rendez-vous', rendezVousRoutes);
+app.use('/taxonomie', taxonomyRoutes);
+app.use('/profil-capillaire', hairProfileRoutes);
 
 // Route de test
 app.get('/', (req, res) => {
